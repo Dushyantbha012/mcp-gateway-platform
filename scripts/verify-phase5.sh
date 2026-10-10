@@ -37,7 +37,22 @@ set_gemini_secret() { # value on stdin; never an argument
   kubectl -n "$NS" create secret generic gateway-gemini --from-file=api-key=/dev/stdin \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
 }
-wait_gateway() { kubectl -n "$NS" rollout status "deployment/$GATEWAY_DEPLOY" --timeout=300s >/dev/null; }
+# `rollout status` straight after `rollout restart` can return before the
+# controller has noticed the change, while the old pod (with the old Secret
+# value) is still the one answering. Wait until it has, then for the rollout.
+wait_gateway() {
+  local want
+  want=$(kubectl -n "$NS" get deploy "$GATEWAY_DEPLOY" -o jsonpath='{.metadata.generation}')
+  until [ "$(kubectl -n "$NS" get deploy "$GATEWAY_DEPLOY" -o jsonpath='{.status.observedGeneration}')" -ge "$want" ]; do
+    sleep 1
+  done
+  kubectl -n "$NS" rollout status "deployment/$GATEWAY_DEPLOY" --timeout=300s >/dev/null
+  # The old pod keeps answering through its preStop sleep, so also wait for it
+  # to be gone: otherwise the next request can still hit the old Secret value.
+  while kubectl -n "$NS" get pods --no-headers | grep "^$GATEWAY_DEPLOY-" | grep -q Terminating; do
+    sleep 1
+  done
+}
 
 cleanup() {
   # A check that aborts between "disable WooCommerce" and "re-enable" must not
@@ -93,7 +108,13 @@ step "All workloads ready; the gateway has chat enabled"
 for d in "$RELEASE-store-woocommerce-mcp" "$GATEWAY_DEPLOY" "$RELEASE-dashboard"; do
   kubectl -n "$NS" rollout status "deployment/$d" --timeout=300s
 done
-kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" --tail=50 | grep -q '"chat agent enabled"' ||
+# Earlier scripts kill pods, so `logs deployment/...` may briefly pick a pod
+# that is starting or terminating: retry against fresh logs for up to a minute.
+for _ in $(seq 30); do
+  kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" 2>/dev/null | grep -q '"chat agent enabled"' && break
+  sleep 2
+done
+kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" | grep -q '"chat agent enabled"' ||
   fail "gateway log doesn't say 'chat agent enabled' (is secret/gateway-gemini present?)"
 echo "ok"
 

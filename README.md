@@ -6,12 +6,13 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 Planning docs (architecture, phased build plan, testing strategy, progress
 log) live outside this repo at [`../docs`](../docs) during development.
 
-**Status:** Phase 6 — the store (WordPress + WooCommerce + MySQL), our own
+**Status:** Phase 7 — the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
 log and REST API), the team dashboard (login, servers, tools, keys, team,
 audit) and the chat agent (Gemini tool loop, streamed to the dashboard) run
 on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
-DeepWiki) and the brief's whole definition of done scripted end to end.
+DeepWiki), the brief's whole definition of done scripted end to end, and
+per-role / per-user tool permissions on top.
 
 ## Layout
 
@@ -198,7 +199,7 @@ curl -X POST http://gateway.local.test/api/servers \
 
 Every tool call (from any client) is written to the audit log with user,
 key, server, tool, time, duration and outcome (`success`, `tool_error`,
-`timeout`, `unreachable`, `rejected`).
+`timeout`, `unreachable`, `rejected`, `denied`).
 
 ## Connect more servers (GitHub, DeepWiki)
 
@@ -210,7 +211,8 @@ are added the way an admin would, through the gateway's API (the dashboard's
    settings → Fine-grained tokens; public repositories only; Metadata,
    Contents, Issues and Pull requests set to _Read_, nothing with write).
    Read-only matters: GitHub's server exposes 49 tools, many of which write,
-   and the chat agent has no per-tool permissions until Phase 7. Save it
+   so a read-only token is still the right defence in depth, even though
+   Phase 7 permissions can hide those tools from members. Save it
    outside the repo:
 
    ```bash
@@ -294,6 +296,24 @@ Ingress sends `/api` to the gateway.
    duration and outcome; filter by user/server/outcome/source, "Live"
    refreshes every 5s.
 
+6. **Permissions** (admin): choose which tools members can see and call.
+   Pick "All members" or one person, then set **Allow**, **Deny** or
+   **Inherit** on a whole server or on a single tool. The "Result for them"
+   column shows what that subject actually gets and why. Rules:
+   - Everything is allowed unless a rule says otherwise; admins are never
+     restricted.
+   - The most specific rule wins: a rule for one person beats a rule for all
+     members, a tool rule beats a server rule, and deny beats allow when
+     they are equally specific. A server rule also covers tools the upstream
+     adds later.
+   - A denied tool is missing from that member's `tools/list` and from the
+     chat agent's tool list, and a direct `tools/call` is refused
+     (`You don't have permission to use ...`) without reaching the upstream.
+     The attempt is audited with outcome `denied`.
+   - Rules are read on every request, so a change applies on the member's
+     next call, on every gateway replica. Removing a server deletes its rules;
+     renaming its slug moves them.
+
 Revoking a key (API keys, or a member's keys on Team) rejects its very next
 MCP call; disabling a member ends their dashboard session and keys at once.
 
@@ -340,6 +360,7 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase4.sh   # dashboard, live (incl. a Playwright run against dashboard.local.test)
 ./scripts/verify-phase5.sh   # chat agent, live against the real Gemini API (reads GEMINI_API_KEY or ~/.config/urumi/gemini.env); then re-runs phases 2-4
 ./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real Gemini, GitHub, DeepWiki), then re-runs phases 2-5
+./scripts/verify-phase7.sh   # the same suite plus its tool-permissions step, live permission/audit checks, then re-runs phases 2-5
 ```
 
 The definition-of-done suite alone (cluster up, upstreams registered):
@@ -378,10 +399,12 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   sent back to the model.
 - **The chat agent doesn't ask before destructive tools.** It acts with the
   user's own permissions and every call is audited, but there is no
-  per-tool confirmation or allow-list until Phase 7. Until then the GitHub
-  upstream uses a read-only token, so its write tools exist but GitHub
-  rejects them (HTTP 403). WooCommerce's `create_product` and
-  `update_order_status` do work for every member.
+  per-call confirmation. Permissions are allow-by-default: until an admin
+  denies a tool, WooCommerce's `create_product` and `update_order_status` work
+  for every member, and a new tool an upstream adds later is available to
+  members too (deny the whole server, or the tool, on the Permissions page).
+  The GitHub upstream also uses a read-only token, so its write tools are
+  rejected by GitHub (HTTP 403) even if permitted.
 - **GitHub and DeepWiki are external.** The suite needs internet access and
   can fail for reasons that aren't ours (DeepWiki down, GitHub token
   expired); the gateway then marks that one server Unreachable and the rest
