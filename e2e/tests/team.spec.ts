@@ -34,7 +34,7 @@ test("two users: admin invites a member, the member connects an MCP client, the 
 
   // A member's view: no admin pages, no edit controls, no upstream URLs.
   const nav = memberPage.getByRole("navigation", { name: "Main" });
-  await expect(nav.getByRole("link")).toHaveText(["Servers", "Tools", "API keys"]);
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Servers", "Tools", "API keys"]);
   await expect(memberPage.getByRole("button", { name: "Add server" })).toHaveCount(0);
   await expect(memberPage.getByTestId("server-alpha").getByRole("switch")).toHaveCount(0);
   await expect(memberPage.getByTestId("server-alpha")).not.toContainText("http://");
