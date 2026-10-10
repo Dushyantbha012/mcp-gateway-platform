@@ -1,0 +1,127 @@
+{{- $name := printf "%s-wordpress" (include "store.fullname" .) -}}
+# Holds the whole WordPress docroot (core, wp-config.php, plugins, uploads).
+# The official image copies WordPress core into an empty /var/www/html on
+# first start, and the bootstrap Job mounts this same volume to run WP-CLI.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.wordpress.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce: a rolling update would start the new pod
+  # while the old one still holds it. Recreate stops the old pod first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "store.selector" (list . "wordpress") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "store.labels" . | nindent 8 }}
+        {{- include "store.selector" (list . "wordpress") | nindent 8 }}
+    spec:
+      containers:
+        - name: wordpress
+          image: {{ .Values.wordpress.image }}
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            {{- include "store.wordpressEnv" . | nindent 12 }}
+          # First start copies WordPress core onto the volume: give it time.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          # Any 2xx/3xx counts: before install wp-login.php redirects to the
+          # installer, which still proves Apache + PHP + DB connection work.
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Liveness only checks Apache is accepting connections, so a slow PHP
+          # page or a DB blip makes the pod unready rather than restart-looping.
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.wordpress.resources | nindent 12 }}
+          volumeMounts:
+            - name: html
+              mountPath: /var/www/html
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: {{ $name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.global.ingress.className | default "traefik" }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName | default (printf "%s-tls" $name) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http

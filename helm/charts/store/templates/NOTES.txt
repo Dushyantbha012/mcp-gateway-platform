@@ -1,0 +1,11 @@
+Store: {{ include "store.wordpressUrl" . }}
+Admin: {{ include "store.wordpressUrl" . }}/wp-admin
+  user:     kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secrets.admin }} -o jsonpath='{.data.username}' | base64 -d
+  password: kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secrets.admin }} -o jsonpath='{.data.password}' | base64 -d
+
+Bootstrap logs: kubectl -n {{ .Release.Namespace }} logs job/{{ include "store.fullname" . }}-bootstrap
+{{- if .Values.woocommerceMcp.enabled }}
+
+WooCommerce MCP server (in-cluster only):
+  http://{{ include "store.fullname" . }}-woocommerce-mcp.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.woocommerceMcp.port }}/mcp
+{{- end }}

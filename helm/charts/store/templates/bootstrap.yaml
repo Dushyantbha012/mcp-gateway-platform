@@ -1,0 +1,116 @@
+{{- $name := printf "%s-bootstrap" (include "store.fullname" .) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+data:
+  bootstrap.sh: |
+    {{- .Files.Get "files/bootstrap.sh" | nindent 4 }}
+  set-admin.php: |
+    {{- .Files.Get "files/set-admin.php" | nindent 4 }}
+  register-api-key.php: |
+    {{- .Files.Get "files/register-api-key.php" | nindent 4 }}
+---
+# Runs after every install/upgrade. The script is idempotent, so running it
+# on each upgrade just re-converges the store's configuration.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "bootstrap") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # Delete the previous run's Job before creating the new one (Job specs are
+    # immutable), but keep the finished Job around for `kubectl logs`.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: {{ .Values.bootstrap.timeoutSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "store.labels" . | nindent 8 }}
+        {{- include "store.selector" (list . "bootstrap") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # The volume is ReadWriteOnce: the Job must land on the same node as the
+      # WordPress pod to mount it.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "store.selector" (list . "wordpress") | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        # wordpress:cli is Alpine (www-data = uid 82) but the wordpress image is
+        # Debian (www-data = uid 33) and owns the files. Run as 33 to match.
+        runAsUser: 33
+        runAsGroup: 33
+        runAsNonRoot: true
+      containers:
+        - name: wp-cli
+          image: {{ .Values.bootstrap.image }}
+          command: ["sh", "/bootstrap/bootstrap.sh"]
+          env:
+            {{- include "store.wordpressEnv" . | nindent 12 }}
+            - name: HOME
+              value: /tmp
+            - name: WP_CLI_CACHE_DIR
+              value: /tmp/wp-cli-cache
+            - name: SITE_URL
+              value: {{ include "store.wordpressUrl" . | quote }}
+            - name: SITE_TITLE
+              value: {{ .Values.site.title | quote }}
+            - name: STORE_COUNTRY
+              value: {{ .Values.site.country | quote }}
+            - name: STORE_CURRENCY
+              value: {{ .Values.site.currency | quote }}
+            - name: WOOCOMMERCE_VERSION
+              value: {{ .Values.bootstrap.woocommerceVersion | quote }}
+            - name: SEED_PRODUCTS
+              value: {{ .Values.bootstrap.seedProducts | quote }}
+            - name: ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.admin }}
+                  key: username
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.admin }}
+                  key: password
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.admin }}
+                  key: email
+            - name: WC_CONSUMER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.wcApi }}
+                  key: consumer-key
+            - name: WC_CONSUMER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.wcApi }}
+                  key: consumer-secret
+          resources:
+            {{- toYaml .Values.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - name: html
+              mountPath: /var/www/html
+            - name: scripts
+              mountPath: /bootstrap
+              readOnly: true
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: {{ include "store.fullname" . }}-wordpress
+        - name: scripts
+          configMap:
+            name: {{ $name }}

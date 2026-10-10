@@ -1,0 +1,97 @@
+{{- $name := printf "%s-mysql" (include "store.fullname" .) -}}
+# Headless Service: gives the StatefulSet pod a stable DNS name
+# (<name>-0.<name>) and lets WordPress connect to "<name>" directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "mysql") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "store.selector" (list . "mysql") | nindent 4 }}
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+# StatefulSet rather than Deployment: stable identity + a PVC created per pod
+# from volumeClaimTemplates, which survives pod deletion and even
+# `helm uninstall` (StatefulSet PVCs are not garbage-collected by default).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "mysql") | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "store.selector" (list . "mysql") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "store.labels" . | nindent 8 }}
+        {{- include "store.selector" (list . "mysql") | nindent 8 }}
+    spec:
+      containers:
+        - name: mysql
+          image: {{ .Values.mysql.image }}
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.db }}
+                  key: root-password
+            - name: MYSQL_DATABASE
+              value: {{ .Values.mysql.database | quote }}
+            - name: MYSQL_USER
+              value: {{ .Values.mysql.user | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.db }}
+                  key: password
+          # Password comes from the env var inside the container, so it never
+          # appears in the pod spec. 127.0.0.1 forces TCP, which only answers
+          # once init is finished (the init phase runs a socket-only server).
+          startupProbe:
+            exec:
+              command: ["sh", "-c", 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent']
+            periodSeconds: 5
+            failureThreshold: 60 # first boot initialises the data dir: allow up to 5 min
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent']
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mysql
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.mysql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.mysql.storage }}

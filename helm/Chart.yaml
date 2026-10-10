@@ -2,8 +2,14 @@ apiVersion: v2
 name: mcp-gateway-platform
 description: >
   WooCommerce store + WooCommerce MCP server + Gateway + Dashboard, deployed
-  as one umbrella Helm chart. Real resources land starting Phase 2
-  (store), Phase 3 (gateway), Phase 4 (dashboard).
+  as one umbrella Helm chart. The store (WordPress, MySQL, bootstrap Job and
+  its MCP server) is the `store` subchart; gateway lands in Phase 3,
+  dashboard in Phase 4.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
+dependencies:
+  - name: store
+    version: 0.1.0
+    repository: file://charts/store
+    condition: store.enabled
