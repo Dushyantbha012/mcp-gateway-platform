@@ -7,6 +7,24 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    # Real Postgres for the gateway's integration tests (each test file
+    # creates and drops its own database inside it).
+    services:
+      postgres:
+        image: postgres:16.11-alpine
+        env:
+          POSTGRES_USER: gateway_test
+          POSTGRES_PASSWORD: gateway_test
+          POSTGRES_DB: gateway_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://gateway_test:gateway_test@localhost:5433/gateway_test
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +39,8 @@ jobs:
 
       - run: npm run format:check
 
-      # Live integration tests skip themselves here (no cluster).
+      # Live integration tests skip themselves here (no cluster); the
+      # gateway's Postgres integration tests run against the service above.
       - run: npm test
 
       - run: npm run build
@@ -51,3 +70,6 @@ jobs:
       # Build only (no push) so a broken Dockerfile fails CI.
       - name: Build woocommerce-mcp image
         run: docker build -f woocommerce-mcp/Dockerfile -t woocommerce-mcp:ci .
+
+      - name: Build gateway image
+        run: docker build -f gateway/Dockerfile -t gateway:ci .

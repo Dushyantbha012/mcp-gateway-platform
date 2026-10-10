@@ -1,10 +1,11 @@
-# Throwaway Postgres for local integration tests (Gateway, starting Phase 3).
+# Throwaway Postgres for the gateway's local integration tests. Tests read
+# TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_test
 # Not used in production — the real deployment's Postgres comes from the
 # Helm chart with its own PVC. Run with:
 #   docker compose -f docker-compose.test.yml up -d
 services:
   test-postgres:
-    image: postgres:16-alpine
+    image: postgres:16.11-alpine
     environment:
       POSTGRES_USER: gateway_test
       POSTGRES_PASSWORD: gateway_test

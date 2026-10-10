@@ -5,6 +5,9 @@
 global:
   ingress:
     className: traefik
+  # Label that marks a pod as an MCP client allowed through the MCP servers'
+  # NetworkPolicies. Set on gateway pods; shared by both subcharts.
+  mcpClientLabel: urumi.ai/mcp-client
 
 # WordPress + WooCommerce + MySQL + the store's WooCommerce MCP server.
 # Every key under here is passed to the store subchart - see
@@ -12,8 +15,9 @@ global:
 store:
   enabled: true
 
+# Gateway + its Postgres. See charts/gateway/values.yaml for every key.
 gateway:
-  enabled: false # becomes true in Phase 3
+  enabled: true
 
 dashboard:
   enabled: false # becomes true in Phase 4

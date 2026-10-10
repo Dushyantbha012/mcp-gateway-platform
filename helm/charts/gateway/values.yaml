@@ -1,0 +1,56 @@
+# Defaults for the gateway. Environment-specific values (ingress host,
+# storage class, image) are set from the umbrella chart's values-local.yaml /
+# values-prod.yaml under the `gateway:` key.
+
+# Created ahead of time by scripts/create-secrets.sh, never by this chart, so
+# `helm uninstall` can't delete the DB password or the key that decrypts the
+# stored upstream credentials. These are the Secret names.
+secrets:
+  db: gateway-db # keys: password
+  encryptionKey: gateway-encryption-key # keys: key (32 random bytes, base64)
+  bootstrapAdmin: gateway-bootstrap-admin # keys: email, api-key (optional Secret)
+
+storageClassName: "" # empty = cluster default
+
+# Normally inherited from the umbrella chart; set here so the chart also
+# renders when installed on its own.
+global:
+  ingress:
+    className: traefik
+  # Pods carrying this label may call MCP servers that only accept the
+  # gateway (see the store chart's woocommerce-mcp NetworkPolicy).
+  mcpClientLabel: urumi.ai/mcp-client
+
+ingress:
+  host: gateway.local.test
+  tls: false
+  tlsSecretName: ""
+  annotations: {}
+
+gateway:
+  image: mcp-gateway/gateway:dev
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  port: 8080
+  healthIntervalMs: 15000
+  listTimeoutMs: 5000
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+
+# Registers the store's WooCommerce MCP server as upstream #1 on first start
+# (only if no server with slug "woocommerce" exists yet).
+seedWoocommerce:
+  enabled: true
+  # Empty = the store subchart's in-cluster Service in this release.
+  url: ""
+  tokenSecret: woocommerce-mcp-auth # key: token
+
+postgres:
+  image: postgres:16.11-alpine
+  database: gateway
+  user: gateway
+  storage: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 384Mi }

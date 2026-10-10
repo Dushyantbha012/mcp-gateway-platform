@@ -14,6 +14,12 @@ store:
 gateway:
   ingress:
     host: gateway.CHANGE_ME.example
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+  storageClassName: local-path
+  gateway:
+    image: ghcr.io/CHANGE_ME/gateway:0.3.0
 
 dashboard:
   ingress:

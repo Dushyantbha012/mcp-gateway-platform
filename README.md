@@ -6,17 +6,19 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 Planning docs (architecture, phased build plan, testing strategy, progress
 log) live outside this repo at [`../docs`](../docs) during development.
 
-**Status:** Phase 2 — the store (WordPress + WooCommerce + MySQL) and our own
-WooCommerce MCP server run on Kubernetes. Gateway, dashboard and chat agent
+**Status:** Phase 3 — the store (WordPress + WooCommerce + MySQL), our own
+WooCommerce MCP server, and the MCP gateway (with its Postgres, API keys,
+audit log and admin REST API) run on Kubernetes. Dashboard and chat agent
 land in later phases.
 
 ## Layout
 
 ```
 woocommerce-mcp/   # our MCP server: 5 tools over Streamable HTTP, talks to the WooCommerce REST API
-gateway/           # (Phase 3) MCP client to every upstream + MCP server for every caller, REST API, chat agent
+gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API (chat agent: Phase 5)
 dashboard/         # (Phase 4) React/Vite admin + member UI
-helm/              # umbrella chart; helm/charts/store = one store (MySQL, WordPress, bootstrap Job, MCP server)
+helm/              # umbrella chart; charts/store = one store (MySQL, WordPress, bootstrap Job, MCP server),
+                   #                 charts/gateway = gateway + its Postgres
 scripts/           # create-secrets.sh, verify-phase*.sh
 ```
 
@@ -45,11 +47,13 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/create-secrets.sh
    ```
 
-4. **Build the MCP server image** and load it into the cluster:
+4. **Build the images** and load them into the cluster:
 
    ```bash
-   docker build -f woocommerce-mcp/Dockerfile -t mcp-gateway/woocommerce-mcp:dev .
-   k3d image import mcp-gateway/woocommerce-mcp:dev -c urumi-mcp
+   for app in woocommerce-mcp gateway; do
+     docker build -f $app/Dockerfile -t mcp-gateway/$app:dev .
+     k3d image import mcp-gateway/$app:dev -c urumi-mcp
+   done
    ```
 
 5. **Deploy**:
@@ -64,10 +68,11 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    on every `helm upgrade`. Logs: `kubectl -n urumi logs job/platform-store-bootstrap`.
 
 6. **Verify everything** (tests, Helm render, deploy, isolation, live MCP
-   calls, persistence, idempotency):
+   calls, failure isolation, NetworkPolicies, persistence):
 
    ```bash
-   ./scripts/verify-phase2.sh
+   ./scripts/verify-phase2.sh   # store + WooCommerce MCP server
+   ./scripts/verify-phase3.sh   # gateway
    ```
 
 ## Using the store
@@ -101,15 +106,77 @@ npx @modelcontextprotocol/inspector
 In Inspector choose transport **Streamable HTTP**, URL
 `http://127.0.0.1:13000/mcp`, and add header `Authorization: Bearer <token>`.
 
+Since Phase 3 a NetworkPolicy also drops traffic from any pod not labelled
+`urumi.ai/mcp-client=true` (the gateway's pods are), so port-forwarding is
+the only way to reach it by hand.
+
 How it talks to the store, and why (REST API + OAuth 1.0a signing): see
 `docs/02-architecture.md`.
+
+## The gateway
+
+One MCP endpoint for the whole team: `http://gateway.local.test/mcp`
+(Streamable HTTP). It lists the tools of every enabled, reachable upstream
+server as `<server>__<tool>` (e.g. `woocommerce__list_orders`) and routes
+each call to the right server, adding that server's stored credential
+server-side. Callers authenticate with their own gateway API key; they never
+see upstream URLs or credentials.
+
+The bootstrap admin's API key (created by `create-secrets.sh`):
+
+```bash
+kubectl -n urumi get secret gateway-bootstrap-admin -o jsonpath='{.data.api-key}' | base64 -d; echo
+```
+
+**Connect an MCP client** with only the gateway URL and a key:
+
+- Claude Code:
+
+  ```bash
+  claude mcp add --transport http gateway http://gateway.local.test/mcp --header "Authorization: Bearer <key>"
+  ```
+
+- MCP Inspector (`npx @modelcontextprotocol/inspector`): transport
+  **Streamable HTTP**, URL `http://gateway.local.test/mcp`, header
+  `Authorization: Bearer <key>`.
+
+**Admin REST API** (the dashboard will use it from Phase 4), with
+`Authorization: Bearer <admin key>`:
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/me` | the caller |
+| GET, POST | `/api/servers` | list (anyone; never includes credentials) / add (admin) |
+| GET, PATCH, DELETE | `/api/servers/:id` | edit, enable/disable, remove (admin) |
+| POST | `/api/servers/:id/refresh` | health-check now (admin) |
+| GET, POST | `/api/users` | list / invite (admin) |
+| GET, POST | `/api/users/:id/keys` | list / issue a key - `me` for yourself; the key is shown once |
+| DELETE | `/api/keys/:id` | revoke (admin or the key's owner) |
+| GET | `/api/audit?userId=&server=&before=&limit=` | audit log, newest first (admin) |
+
+Example - add a server with a bearer credential:
+
+```bash
+curl -X POST http://gateway.local.test/api/servers \
+  -H "Authorization: Bearer $ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"slug":"github","name":"GitHub","url":"https://api.githubcopilot.com/mcp/","authType":"bearer","credential":"<token>"}'
+```
+
+Every tool call (from any client) is written to the audit log with user,
+key, server, tool, time, duration and outcome (`success`, `tool_error`,
+`timeout`, `unreachable`, `rejected`).
 
 ## Tests
 
 ```bash
-npm test           # unit + MCP protocol tests (no cluster needed)
-./scripts/verify-phase2.sh   # everything above, plus live tests against the k3d deployment
+docker compose -f docker-compose.test.yml up -d   # throwaway Postgres for gateway integration tests
+TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_test npm test
+./scripts/verify-phase2.sh   # store + MCP server, live against the k3d deployment
+./scripts/verify-phase3.sh   # gateway, live against the k3d deployment
 ```
+
+Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
+(with a warning); CI always runs them against a Postgres service container.
 
 ## Known limitations
 

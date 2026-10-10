@@ -44,3 +44,21 @@ create store-wc-api \
 
 create woocommerce-mcp-auth \
   --from-literal=token="$(rand 32)"
+
+# --- Gateway ---
+create gateway-db \
+  --from-literal=password="$(rand 24)"
+
+# AES-256-GCM key for upstream credentials stored in the gateway's Postgres.
+# Losing it means re-entering every upstream credential.
+create gateway-encryption-key \
+  --from-literal=key="$(openssl rand -base64 32)"
+
+# Bootstrap admin: seeded on the gateway's first start. Same format as keys
+# the gateway issues: mgw_<8 hex>_<32 random bytes, base64url>.
+api_key="mgw_$(rand 4)_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+create gateway-bootstrap-admin \
+  --from-literal=email="${GATEWAY_ADMIN_EMAIL:-admin@example.com}" \
+  --from-literal=api-key="$api_key"
+unset api_key
+echo "Gateway admin API key: kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.api-key}' | base64 -d"

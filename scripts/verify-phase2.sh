@@ -96,9 +96,13 @@ TOKEN=$(secret woocommerce-mcp-auth token)
 URL="http://$MCP_SVC.$NS.svc.cluster.local:3000/mcp"
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
 LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+# Labelled as an MCP client: since Phase 3 a NetworkPolicy drops traffic
+# from any other pod (verify-phase3.sh checks that side).
 kubectl -n "$NS" run mcp-probe --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 \
-  --env="TOKEN=$TOKEN" --command -- sh -c "
+  --labels="urumi.ai/mcp-client=true" --env="TOKEN=$TOKEN" --command -- sh -c "
     h='-H content-type:application/json -H accept:application/json,text/event-stream'
+    # A new pod is admitted by the NetworkPolicy controller within a second or two.
+    for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null --max-time 1 '${URL%/mcp}/healthz' && break; sleep 1; done
     noauth=\$(curl -s -o /dev/null -w '%{http_code}' \$h -X POST '$URL' -d '$INIT')
     echo \"without token: HTTP \$noauth\"
     [ \"\$noauth\" = 401 ] || exit 1
