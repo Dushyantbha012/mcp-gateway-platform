@@ -5,7 +5,8 @@ import { generateApiKey, hashApiKey } from "./crypto/apiKeys.js";
 import { createSecretBox } from "./crypto/secretBox.js";
 import { findPrincipalByKeyHash, revokeApiKey } from "./db/apiKeys.js";
 import { getServerBySlug, listServers, updateServer } from "./db/servers.js";
-import { listUsers } from "./db/users.js";
+import { verifyPassword } from "./crypto/passwords.js";
+import { findUserByEmail, listUsers, setPasswordHash } from "./db/users.js";
 import { seed } from "./seed.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "./test/testDb.js";
 
@@ -13,7 +14,11 @@ describe.skipIf(!hasTestDb)("startup seeding", () => {
   const box = createSecretBox(randomBytes(32).toString("base64"));
   const adminKey = generateApiKey().key;
   const config = {
-    bootstrapAdmin: { email: "Admin@Example.com", apiKey: adminKey },
+    bootstrapAdmin: {
+      email: "Admin@Example.com",
+      apiKey: adminKey,
+      password: "bootstrap-password",
+    },
     seedWoocommerce: { url: "http://woo.urumi.svc.cluster.local:3000/mcp", token: "wc-token" },
   } as Config;
   let t: TestDatabase;
@@ -77,6 +82,29 @@ describe.skipIf(!hasTestDb)("startup seeding", () => {
       expect(await listServers(fresh.db)).toHaveLength(0);
     } finally {
       await fresh.drop();
+    }
+  });
+
+  it("sets the admin's dashboard password once and never overwrites a changed one", async () => {
+    const admin = await findUserByEmail(t.db, "admin@example.com");
+    expect(await verifyPassword("bootstrap-password", admin!.password_hash!)).toBe(true);
+
+    await setPasswordHash(t.db, admin!.id, "scrypt$changed-in-dashboard");
+    await seed(t.db, box, config);
+    expect((await findUserByEmail(t.db, "admin@example.com"))?.password_hash).toBe(
+      "scrypt$changed-in-dashboard",
+    );
+  });
+
+  it("works without a bootstrap password (API key only)", async () => {
+    const iso = await createTestDatabase();
+    try {
+      await seed(iso.db, box, {
+        bootstrapAdmin: { email: "solo@example.com", apiKey: generateApiKey().key },
+      } as Config);
+      expect((await findUserByEmail(iso.db, "solo@example.com"))?.password_hash).toBeNull();
+    } finally {
+      await iso.drop();
     }
   });
 });

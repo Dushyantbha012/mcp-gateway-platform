@@ -37,7 +37,7 @@ const health = new HealthChecker(db, registry, {
 const router = new ToolRouter(db, registry);
 health.start();
 
-const app = createApp({ db, box, registry, health, router });
+const app = createApp({ db, box, registry, health, router, config });
 const server = app.listen(config.port, "0.0.0.0", () => {
   log("info", "gateway listening", { port: config.port });
 });

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey, prefixOf } from "./crypto/apiKeys.js";
+import { hashPassword } from "./crypto/passwords.js";
 import type { SecretBox } from "./crypto/secretBox.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/db.js";
 import { getServerBySlug, insertServer } from "./db/servers.js";
-import { createUser, findUserByEmail } from "./db/users.js";
+import { createUser, findUserByEmail, setPasswordHash } from "./db/users.js";
 import { log } from "./logger.js";
 
 /**
@@ -17,7 +18,7 @@ export async function seed(db: Db, box: SecretBox, config: Config): Promise<void
   if (config.seedWoocommerce) await seedWoocommerce(db, box, config.seedWoocommerce);
 }
 
-async function seedAdmin(db: Db, admin: { email: string; apiKey: string }) {
+async function seedAdmin(db: Db, admin: { email: string; apiKey: string; password?: string }) {
   let user = await findUserByEmail(db, admin.email);
   if (!user) {
     try {
@@ -42,6 +43,14 @@ async function seedAdmin(db: Db, admin: { email: string; apiKey: string }) {
     .returning("id")
     .executeTakeFirst();
   if (inserted) log("info", "seeded bootstrap admin key", { prefix: prefixOf(admin.apiKey) });
+
+  // Dashboard password: only if the admin has none, so a password changed in
+  // the dashboard survives restarts. (Concurrent replicas may both set it -
+  // to the same password, which is harmless.)
+  if (admin.password && user.password_hash === null) {
+    await setPasswordHash(db, user.id, await hashPassword(admin.password));
+    log("info", "seeded bootstrap admin password", { email: user.email });
+  }
 }
 
 async function seedWoocommerce(db: Db, box: SecretBox, wc: { url: string; token: string }) {
