@@ -101,6 +101,8 @@ LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 kubectl -n "$NS" run mcp-probe --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 \
   --labels="urumi.ai/mcp-client=true" --env="TOKEN=$TOKEN" --command -- sh -c "
     h='-H content-type:application/json -H accept:application/json,text/event-stream'
+    # A new pod is admitted by the NetworkPolicy controller within a second or two.
+    for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null --max-time 1 '${URL%/mcp}/healthz' && break; sleep 1; done
     noauth=\$(curl -s -o /dev/null -w '%{http_code}' \$h -X POST '$URL' -d '$INIT')
     echo \"without token: HTTP \$noauth\"
     [ \"\$noauth\" = 401 ] || exit 1
