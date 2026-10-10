@@ -41,7 +41,7 @@ export function requireApiKey(db: Db, style: ErrorStyle) {
       return;
     }
     res.locals.principal = principal;
-    touchApiKey(db, principal.keyId).catch((err) =>
+    touchApiKey(db, principal.keyId!).catch((err) =>
       log("warn", "could not record key use", { error: String(err) }),
     );
     next();

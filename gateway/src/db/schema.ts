@@ -17,6 +17,7 @@ export interface UsersTable {
   role: Role;
   created_at: CreatedAt;
   disabled_at: Date | null;
+  password_hash: string | null;
 }
 
 export interface ApiKeysTable {
@@ -66,14 +67,36 @@ export interface AuditLogTable {
   error: string | null;
 }
 
+export interface SessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: Buffer;
+  created_at: CreatedAt;
+  last_seen_at: Generated<Date>;
+  expires_at: Date;
+}
+
+export interface InvitesTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: Buffer;
+  created_by: string | null;
+  created_at: CreatedAt;
+  expires_at: Date;
+  used_at: Date | null;
+}
+
 export interface Database {
   users: UsersTable;
   api_keys: ApiKeysTable;
   mcp_servers: McpServersTable;
   audit_log: AuditLogTable;
+  sessions: SessionsTable;
+  invites: InvitesTable;
 }
 
 export type User = Selectable<UsersTable>;
+export type UserUpdate = Updateable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;
 export type ApiKey = Selectable<ApiKeysTable>;
 export type McpServer = Selectable<McpServersTable>;
