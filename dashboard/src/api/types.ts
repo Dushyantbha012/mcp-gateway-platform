@@ -133,3 +133,30 @@ export type ChatEvent =
   | { type: "text"; text: string }
   | { type: "done"; steps: number }
   | { type: "error"; code: string; message: string };
+
+export type RuleEffect = "allow" | "deny";
+
+export type RuleSubject =
+  { type: "role"; role: Role } | { type: "user"; userId: string; email?: string; name?: string };
+
+export interface PermissionRule {
+  id: string;
+  subject: RuleSubject;
+  serverSlug: string;
+  /** The upstream's own tool name; null = the whole server. */
+  toolName: string | null;
+  effect: RuleEffect;
+  createdAt: string;
+}
+
+/** Who a rule is being edited for: the Members role, or one person. */
+export type PermissionSubject = { role: "member" } | { userId: string };
+
+export interface EffectiveTool {
+  name: string;
+  serverSlug: string;
+  toolName: string;
+  allowed: boolean;
+  reason: "admin" | "default" | "rule";
+  rule?: { subjectType: "role" | "user"; toolName: string | null; effect: RuleEffect };
+}

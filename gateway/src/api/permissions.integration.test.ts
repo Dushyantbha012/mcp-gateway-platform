@@ -52,7 +52,7 @@ describe.skipIf(!hasTestDb)("/api/permissions", () => {
     expect((await m.delete("/api/permissions/00000000-0000-4000-8000-000000000000")).status).toBe(
       403,
     );
-    expect((await m.get(`/api/permissions/effective/${member.user.id}`)).status).toBe(403);
+    expect((await m.get(`/api/permissions/effective?userId=${member.user.id}`)).status).toBe(403);
     expect((await request(gw.app).get("/api/permissions")).status).toBe(401);
   });
 
@@ -157,7 +157,7 @@ describe.skipIf(!hasTestDb)("/api/permissions", () => {
     });
     const view = async (id: string) =>
       (
-        (await a.get(`/api/permissions/effective/${id}`)).body as {
+        (await a.get(`/api/permissions/effective?userId=${id}`)).body as {
           name: string;
           allowed: boolean;
           reason: string;
@@ -184,7 +184,25 @@ describe.skipIf(!hasTestDb)("/api/permissions", () => {
       ]),
     );
     expect((await view(admin.user.id)).every((x) => x.allowed && x.reason === "admin")).toBe(true);
-    expect((await a.get("/api/permissions/effective/not-a-uuid")).status).toBe(404);
+    // The role as a whole: only role rules, never anyone's user rules.
+    const roleView = (await a.get("/api/permissions/effective?role=member")).body as {
+      name: string;
+      allowed: boolean;
+    }[];
+    expect(roleView.find((x) => x.name === "shop__update_order_status")?.allowed).toBe(false);
+    const asAdminRole = (await a.get("/api/permissions/effective?role=admin")).body as {
+      allowed: boolean;
+    }[];
+    expect(asAdminRole.every((x) => x.allowed)).toBe(true);
+    expect((await a.get("/api/permissions/effective?userId=not-a-uuid")).status).toBe(400);
+    expect(
+      (await a.get("/api/permissions/effective?userId=00000000-0000-4000-8000-000000000000"))
+        .status,
+    ).toBe(404);
+    expect((await a.get("/api/permissions/effective")).status).toBe(400);
+    expect(
+      (await a.get(`/api/permissions/effective?role=member&userId=${other.user.id}`)).status,
+    ).toBe(400);
   });
 
   it("removing a server removes its rules, so a new server with that slug starts clean", async () => {

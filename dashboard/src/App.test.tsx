@@ -103,10 +103,10 @@ describe("auth routing", () => {
 });
 
 describe("role-based navigation", () => {
-  it("members don't see Team or Audit, and are bounced from those URLs", async () => {
+  it("members don't see Team, Permissions or Audit, and are bounced from those URLs", async () => {
     loggedInAs(member);
     server.use(http.get("/api/servers", () => HttpResponse.json([])));
-    renderApp("/team");
+    renderApp("/permissions");
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(
       within(nav)
@@ -125,7 +125,7 @@ describe("role-based navigation", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Chat", "Servers", "Tools", "API keys", "Team", "Audit log"]);
+    ).toEqual(["Chat", "Servers", "Tools", "API keys", "Team", "Permissions", "Audit log"]);
   });
 
   it("logs out from the account menu", async () => {

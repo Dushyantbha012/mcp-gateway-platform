@@ -76,13 +76,28 @@ export function permissionsApi(db: Db) {
   });
 
   /**
-   * What this user would get from tools/list, and why each other tool is
-   * hidden: every tool of every enabled server with the decision on it. Uses
-   * the same `decide` as the gateway, so the preview can't drift from it.
+   * What a subject would get from tools/list: every tool of every enabled
+   * server with the decision on it and why. `?userId=` previews one member,
+   * `?role=member` the role as a whole (no user rules). Uses the same
+   * `decide` as the gateway, so the preview can't drift from the real thing.
    */
-  api.get("/effective/:userId", async (req, res) => {
-    const user = await getUser(db, req.params.userId).catch(() => undefined);
-    if (!user) throw notFound("User");
+  api.get("/effective", async (req, res) => {
+    const q = parse(
+      z
+        .object({ userId: z.uuid().optional(), role: z.enum(["admin", "member"]).optional() })
+        .strict()
+        .refine((v) => (v.userId === undefined) !== (v.role === undefined), {
+          message: "give exactly one of userId or role",
+        }),
+      req.query,
+    );
+    // A role preview uses an id no user has, so only the role's rules match.
+    let subject = { userId: "", role: q.role ?? ("member" as const) };
+    if (q.userId) {
+      const user = await getUser(db, q.userId);
+      if (!user) throw notFound("User");
+      subject = { userId: user.id, role: user.role };
+    }
     const [rows, servers] = await Promise.all([listPermissionRows(db), listServers(db)]);
     const rules = rows.map(toRule);
     const out = [];
@@ -91,11 +106,7 @@ export function permissionsApi(db: Db) {
         { slug: server.slug, name: server.name, tools: (server.tools_cache ?? []) as Tool[] },
       ]);
       for (const [name, route] of index.routes) {
-        const d = decide(
-          { userId: user.id, role: user.role },
-          { serverSlug: route.slug, toolName: route.upstreamName },
-          rules,
-        );
+        const d = decide(subject, { serverSlug: route.slug, toolName: route.upstreamName }, rules);
         out.push({
           name,
           serverSlug: route.slug,

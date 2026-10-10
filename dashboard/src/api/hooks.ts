@@ -4,11 +4,15 @@ import type {
   ApiKey,
   AuditEntry,
   AuditFilters,
+  EffectiveTool,
   Invite,
   McpTool,
   Meta,
   NewApiKey,
+  PermissionRule,
+  PermissionSubject,
   Role,
+  RuleEffect,
   Server,
   ServerInput,
   User,
@@ -28,6 +32,8 @@ export const keys = {
   tools: ["tools"] as const,
   users: ["users"] as const,
   userKeys: (userId: string) => ["users", userId, "keys"] as const,
+  permissions: ["permissions"] as const,
+  effective: (subject: PermissionSubject) => ["permissions", "effective", subject] as const,
   audit: (filters: AuditFilters) => ["audit", filters] as const,
 };
 
@@ -74,6 +80,24 @@ export function useUserKeys(userId: string) {
   return useQuery({
     queryKey: keys.userKeys(userId),
     queryFn: () => api<ApiKey[]>(`/users/${userId}/keys`),
+  });
+}
+
+export function usePermissions() {
+  return useQuery({
+    queryKey: keys.permissions,
+    queryFn: () => api<PermissionRule[]>("/permissions"),
+  });
+}
+
+const subjectQuery = (subject: PermissionSubject) =>
+  new URLSearchParams("userId" in subject ? { userId: subject.userId } : { role: subject.role });
+
+/** What the gateway would show this subject right now, with the reason for each tool. */
+export function useEffectivePermissions(subject: PermissionSubject) {
+  return useQuery({
+    queryKey: keys.effective(subject),
+    queryFn: () => api<EffectiveTool[]>(`/permissions/effective?${subjectQuery(subject)}`),
   });
 }
 
@@ -174,6 +198,30 @@ export function useRefreshServer() {
   return useMutation({
     mutationFn: (id: string) => api<Server>(`/servers/${id}/refresh`, { method: "POST" }),
     onSuccess: () => invalidate(keys.servers, keys.tools),
+  });
+}
+
+/** Set a rule (allow/deny), or clear it (null) so the target goes back to inheriting. */
+export function useSetRule() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: async (v: {
+      subject: PermissionSubject;
+      serverSlug: string;
+      toolName: string | null;
+      effect: RuleEffect | null;
+      existingId?: string;
+    }) => {
+      if (v.effect === null) {
+        if (v.existingId) await api<void>(`/permissions/${v.existingId}`, { method: "DELETE" });
+        return;
+      }
+      await api("/permissions", {
+        method: "PUT",
+        body: { ...v.subject, serverSlug: v.serverSlug, toolName: v.toolName, effect: v.effect },
+      });
+    },
+    onSuccess: () => invalidate(keys.permissions, keys.tools),
   });
 }
 
