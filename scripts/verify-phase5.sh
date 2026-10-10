@@ -40,6 +40,12 @@ set_gemini_secret() { # value on stdin; never an argument
 wait_gateway() { kubectl -n "$NS" rollout status "deployment/$GATEWAY_DEPLOY" --timeout=300s >/dev/null; }
 
 cleanup() {
+  # A check that aborts between "disable WooCommerce" and "re-enable" must not
+  # leave it disabled for whatever runs next (the chat would then have no store tools).
+  if [ -n "${WOO_ID:-}" ]; then
+    curl -s -o /dev/null -X PATCH -b "$JAR_ADMIN" -H "Origin: $DASH" -H "Content-Type: application/json" \
+      -d '{"enabled":true}' "$DASH/api/servers/$WOO_ID" || true
+  fi
   rm -f "$JAR_ADMIN" "$JAR_MEMBER" "$OUT"
   # Always put the real key back if a check swapped it out.
   if [ -n "$SAVED_KEY" ]; then
@@ -190,21 +196,27 @@ print("ok: admin and member chat calls are audited under their own names, source
 step "Disable WooCommerce: its tools vanish from chat on the next message; re-enable brings them back"
 WOO_ID=$(as_admin /servers | jsonget 'next(s["id"] for s in d if s["slug"] == "woocommerce")')
 as_admin "/servers/$WOO_ID" -X PATCH -d '{"enabled":false}' >/dev/null
+# Other upstreams (GitHub, DeepWiki since Phase 6) may still be registered, so
+# the agent may use their tools; it must never be able to use WooCommerce's.
+[ "$(as_admin /tools | jsonget 'sum(1 for t in d if t["name"].startswith("woocommerce__"))')" = "0" ] ||
+  fail "woocommerce tools still offered while disabled"
 chat_admin "What orders came in today?" >"$OUT"
-[ -z "$(called)" ] || fail "agent called tools while every server was disabled: $(called)"
-python3 - "$OUT" <<'PY' || fail "expected a plain answer (no tools exist), got: $(cat "$OUT")"
+called | grep -q "^woocommerce__" && fail "agent called a WooCommerce tool while it was disabled: $(called)"
+python3 - "$OUT" <<'PY' || fail "expected a clean answer without WooCommerce, got: $(cat "$OUT")"
 import json, sys
 ev = [json.loads(l) for l in open(sys.argv[1])]
 assert ev[-1]["type"] == "done" and any(e["type"] == "text" for e in ev), ev
 PY
-echo "disabled: the agent answered without tools ($(event_types))"
+echo "disabled: no WooCommerce tools offered or called ($(event_types))"
 as_admin "/servers/$WOO_ID" -X PATCH -d '{"enabled":true}' >/dev/null
 for _ in $(seq 1 60); do
   [ "$(as_admin /servers | jsonget 'next((s["status"] for s in d if s["slug"] == "woocommerce"), "missing")')" = "connected" ] && break
   sleep 1
 done
-chat_admin "What orders came in today?" >"$OUT"
-called | grep -qx "woocommerce__list_orders" || fail "tools didn't come back after re-enable"
+[ "$(as_admin /tools | jsonget 'sum(1 for t in d if t["name"].startswith("woocommerce__"))')" = "5" ] ||
+  fail "woocommerce tools didn't come back after re-enable"
+chat_admin "Using the WooCommerce store, what orders came in today?" >"$OUT"
+called | grep -q "^woocommerce__" || fail "chat didn't use WooCommerce after re-enable: $(called)"
 echo "ok"
 
 step "A rejected Gemini key: the turn ends with a clear error, the gateway stays Ready, the rest keeps working"

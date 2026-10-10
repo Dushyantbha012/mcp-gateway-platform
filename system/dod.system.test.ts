@@ -243,10 +243,8 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
 
   it("Chat as user A: 'create a product' puts it on the storefront", async () => {
     productName = `DoD Mug ${run}`;
-    await chatUntil(
-      a,
-      `Create a product named "${productName}" priced 9.75`,
-      (ev) => called(ev).includes("woocommerce__create_product"),
+    await chatUntil(a, `Create a product named "${productName}" priced 9.75`, (ev) =>
+      called(ev).includes("woocommerce__create_product"),
     );
     const product = await storefrontProduct(productName);
     expect(product, "product on the storefront").toBeDefined();
@@ -287,7 +285,10 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     const client = await connect(b.key);
     const names = await toolNames(client);
     for (const prefix of ["woocommerce__", "github__", "deepwiki__"]) {
-      expect(names.some((n) => n.startsWith(prefix)), prefix).toBe(true);
+      expect(
+        names.some((n) => n.startsWith(prefix)),
+        prefix,
+      ).toBe(true);
     }
     const orders = await call(b, client, "woocommerce__list_orders", {}, "success");
     expect(textOf(orders)).toContain(String(orderId));
@@ -370,7 +371,11 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     // Chat can't use it either: the model is offered no deepwiki tools.
     const events = await chat(a, "Use DeepWiki to read the structure of woocommerce/woocommerce.");
     for (const r of events.filter((e) => e.type === "tool_result")) {
-      a.expected.push({ tool: r.name!, source: "chat", outcome: r.isError ? "tool_error" : "success" });
+      a.expected.push({
+        tool: r.name!,
+        source: "chat",
+        outcome: r.isError ? "tool_error" : "success",
+      });
     }
     expect(called(events).some((n) => n.startsWith("deepwiki__"))).toBe(false);
 
@@ -391,7 +396,13 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
       expect(woo.lastError).toBeTruthy();
 
       await call(a, client, "github__get_me", {}, "success");
-      await call(a, client, "deepwiki__read_wiki_structure", { repoName: "woocommerce/woocommerce" }, "success");
+      await call(
+        a,
+        client,
+        "deepwiki__read_wiki_structure",
+        { repoName: "woocommerce/woocommerce" },
+        "success",
+      );
       const dead = await call(a, client, "woocommerce__list_orders", {}, "unreachable");
       expect(textOf(dead)).toMatch(/woocommerce/i);
       expect(await serverStatus("deepwiki")).toBe("connected");
