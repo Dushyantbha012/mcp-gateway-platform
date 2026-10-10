@@ -9,3 +9,5 @@ build/
 coverage/
 .vite/
 *.tsbuildinfo
+test-results/
+playwright-report/

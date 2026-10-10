@@ -4,3 +4,5 @@ coverage
 *.md
 # Helm templates are Go templates, not valid YAML until rendered
 helm/**/templates
+test-results
+playwright-report

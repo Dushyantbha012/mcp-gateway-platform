@@ -59,9 +59,13 @@ export function describeError(err: unknown, slug: string, timeoutMs: number): Up
         `Upstream '${slug}' rejected the gateway's credentials (HTTP ${err.code})`,
       );
     }
+    // The status only, not the body: an upstream's error page is untrusted
+    // and says nothing an admin can act on that the status doesn't.
     return new UpstreamError(
       "unreachable",
-      `Upstream '${slug}' returned an error: ${err.message.slice(0, 200)}`,
+      err.code
+        ? `Upstream '${slug}' returned HTTP ${err.code}`
+        : `Upstream '${slug}' returned an error: ${err.message.slice(0, 200)}`,
     );
   }
   // fetch hides the network reason in `cause` (sometimes an AggregateError,
