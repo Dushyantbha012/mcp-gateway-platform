@@ -205,6 +205,17 @@ describe("error mapping", () => {
     if (status === 429) expect((err as LlmError).retryAfterMs).toBe(3000);
   });
 
+  it("treats Google's HTTP 400 'API key not valid' as an auth problem, not a bad request", async () => {
+    const { client } = await fakeGemini({
+      status: 400,
+      body: { error: { message: "API key not valid. Please pass a valid API key." } },
+    });
+    const err = await client
+      .generate({ system: "s", tools: [], turns: [{ role: "user", text: "x" }] })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: "auth" });
+  });
+
   it("maps a refused connection to 'unavailable'", async () => {
     const client = new GeminiClient({ apiKey: KEY, model: "m", baseUrl: "http://127.0.0.1:1" });
     const err = await client

@@ -169,7 +169,10 @@ async function toError(res: Response): Promise<LlmError> {
         Number.isFinite(retry) && retry > 0 ? retry * 1000 : undefined,
       );
     }
-    case res.status === 401 || res.status === 403:
+    // Google reports a malformed or unknown key as HTTP 400, not 401.
+    case res.status === 401 ||
+      res.status === 403 ||
+      (res.status === 400 && /api key/i.test(detail ?? "")):
       return new LlmError("auth", "The Gemini API rejected the gateway's API key.");
     case res.status === 400 || res.status === 404:
       return new LlmError(

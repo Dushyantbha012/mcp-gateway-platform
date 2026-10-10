@@ -71,6 +71,24 @@ if [ -z "$(kubectl -n "$NAMESPACE" get secret gateway-bootstrap-admin -o jsonpat
   echo "secret/gateway-bootstrap-admin: added dashboard password"
 fi
 
+# Chat agent (Phase 5). Only created when GEMINI_API_KEY is set, so an install
+# without a key still works (chat is simply off). The value is piped in, not
+# passed as an argument, so it never shows in a process list. To rotate:
+#   kubectl -n urumi delete secret gateway-gemini
+#   GEMINI_API_KEY=... ./scripts/create-secrets.sh
+#   kubectl -n urumi rollout restart deployment/platform-gateway
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  if kubectl -n "$NAMESPACE" get secret gateway-gemini >/dev/null 2>&1; then
+    echo "secret/gateway-gemini exists, leaving it as is"
+  else
+    printf '%s' "$GEMINI_API_KEY" |
+      kubectl -n "$NAMESPACE" create secret generic gateway-gemini --from-file=api-key=/dev/stdin
+  fi
+else
+  kubectl -n "$NAMESPACE" get secret gateway-gemini >/dev/null 2>&1 ||
+    echo "GEMINI_API_KEY not set and no secret/gateway-gemini: the chat agent will be off"
+fi
+
 echo "Gateway admin API key:  kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.api-key}' | base64 -d"
 echo "Dashboard admin login:  kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.email}' | base64 -d"
 echo "                        kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.password}' | base64 -d"

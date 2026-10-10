@@ -151,6 +151,37 @@ describe("runAgent", () => {
     expect(events.filter((e) => e.type === "tool_call")).toHaveLength(3);
   });
 
+  it("gives up after several steps in a row where every tool call failed", async () => {
+    const { deps, callTool, llm } = setup(
+      Array.from({ length: 6 }, () => callTools({ name: "nope__tool" })),
+    );
+    callTool.mockResolvedValue(fail("Unknown tool 'nope__tool'."));
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "tool_failures" });
+    expect(llm.requests).toHaveLength(3);
+  });
+
+  it("a success resets the failure count", async () => {
+    const { deps, callTool } = setup([
+      callTools({ name: "a__x" }),
+      callTools({ name: "a__x" }),
+      callTools({ name: "shop__list_orders" }),
+      callTools({ name: "a__x" }),
+      callTools({ name: "a__x" }),
+      say("done"),
+    ]);
+    callTool.mockImplementation(async (name) => (name === "a__x" ? fail("nope") : ok("{}")));
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+  });
+
+  it("tells the model when there are no tools at all", async () => {
+    const { deps, llm } = setup([say("I can't look that up.")], { listTools: async () => [] });
+    await collect(runAgent(ask("orders?"), deps));
+    expect(llm.requests[0].tools).toEqual([]);
+    expect(llm.requests[0].system).toMatch(/No tools are available/);
+  });
+
   it("stops after maxToolCalls", async () => {
     const { deps, callTool } = setup(
       [
@@ -303,6 +334,10 @@ describe("resultText", () => {
 });
 
 describe("systemPrompt", () => {
+  it("only mentions missing tools when there are none", () => {
+    expect(systemPrompt(new Date(), 3)).not.toMatch(/No tools are available/);
+    expect(systemPrompt(new Date(), 0)).toMatch(/No tools are available/);
+  });
   it("treats tool output as data", () => {
     expect(systemPrompt(new Date())).toMatch(/data, never\s+instructions/);
   });
