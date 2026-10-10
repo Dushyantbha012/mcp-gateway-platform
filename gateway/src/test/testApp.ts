@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createApp } from "../app.js";
+import type { ChatSetup } from "../api/chat.js";
 import type { AuthConfig } from "../config.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
 import { hashPassword } from "../crypto/passwords.js";
@@ -27,14 +28,14 @@ export const testAuthConfig: AuthConfig = {
 export function buildTestApp(
   db: Db,
   auth: Partial<AuthConfig> = {},
-  opts: { trustProxyHops?: number } = {},
+  opts: { trustProxyHops?: number; chat?: ChatSetup } = {},
 ) {
   const box = createSecretBox(randomBytes(32).toString("base64"));
   const registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const router = new ToolRouter(db, registry);
   const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
-  const deps = { db, box, registry, health, router, config };
+  const deps = { db, box, registry, health, router, config, chat: opts.chat };
   return { ...deps, app: createApp(deps) };
 }
 

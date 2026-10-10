@@ -520,10 +520,11 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
       expect(await names()).toEqual(all);
     });
 
-    it("/api/meta gives the public MCP URL", async () => {
+    it("/api/meta gives the public MCP URL and whether chat is on", async () => {
       const member = await loggedIn("member");
       expect((await member.as.get("/api/meta")).body).toEqual({
         mcpUrl: "http://gateway.test/mcp",
+        chatEnabled: false,
       });
     });
   });

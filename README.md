@@ -6,16 +6,17 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 Planning docs (architecture, phased build plan, testing strategy, progress
 log) live outside this repo at [`../docs`](../docs) during development.
 
-**Status:** Phase 4 — the store (WordPress + WooCommerce + MySQL), our own
+**Status:** Phase 5 — the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
-log and REST API) and the team dashboard (login, servers, tools, keys, team,
-audit) run on Kubernetes. The chat agent lands in Phase 5.
+log and REST API), the team dashboard (login, servers, tools, keys, team,
+audit) and the chat agent (Gemini tool loop, streamed to the dashboard) run
+on Kubernetes.
 
 ## Layout
 
 ```
 woocommerce-mcp/   # our MCP server: 5 tools over Streamable HTTP, talks to the WooCommerce REST API
-gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API (chat agent: Phase 5)
+gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API, chat agent
 dashboard/         # React/Vite admin + member UI (Tailwind + shadcn/ui), served by nginx
 e2e/               # Playwright: browser tests against the real gateway + dashboard build
 helm/              # umbrella chart; charts/store = one store (MySQL, WordPress, bootstrap Job, MCP server),
@@ -40,14 +41,30 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    127.0.0.1 store.local.test dashboard.local.test gateway.local.test
    ```
 
+   If requests to these names take exactly 5 seconds each (`curl -w
+   '%{time_namelookup}' http://gateway.local.test/healthz`), the macOS resolver
+   is waiting for an IPv6 answer; add the IPv6 loopback too:
+
+   ```
+   ::1 store.local.test dashboard.local.test gateway.local.test
+   ```
+
    `*.local.test` never resolves on the public internet (`.test` is reserved
    by RFC 2606), so these names can't collide with a real site.
 
-3. **Secrets** — random values, created once, never in git:
+3. **Secrets** — random values, created once, never in git. For the chat
+   agent, create a free Gemini API key in
+   [Google AI Studio](https://aistudio.google.com/apikey) and pass it in the
+   environment (it's piped to `kubectl`, never put on a command line or in a
+   values file). Without it everything else works and chat is switched off:
 
    ```bash
-   ./scripts/create-secrets.sh
+   GEMINI_API_KEY=... ./scripts/create-secrets.sh
    ```
+
+   To rotate the key later: `kubectl -n urumi delete secret gateway-gemini`,
+   run the line above again, then `kubectl -n urumi rollout restart
+   deployment/platform-gateway`.
 
 4. **Build the images** and load them into the cluster:
 
@@ -216,6 +233,37 @@ Ingress sends `/api` to the gateway.
 Revoking a key (API keys, or a member's keys on Team) rejects its very next
 MCP call; disabling a member ends their dashboard session and keys at once.
 
+## The chat agent
+
+http://dashboard.local.test/chat (every logged-in user). Ask a question; the
+agent picks tools from the same list your MCP client gets
+(`woocommerce__list_orders`, ...), calls them **as you**, and answers from the
+results. Each turn shows a "Tools called" panel (arguments, result, duration)
+while it streams; **Stop** ends a turn and **New chat** starts over. Answers are
+rendered as markdown (raw HTML is never rendered).
+
+To reproduce the demo flow:
+
+1. Chat: _"Create a product named Demo Mug priced 12.50"_. Open
+   http://store.local.test and the product is there.
+2. On the storefront, add it to the cart and check out with Cash on Delivery.
+3. Chat: _"What orders came in today?"_ — it calls `woocommerce__list_orders`
+   and lists your order.
+4. As admin, Audit log shows both calls under your name with source `chat`.
+
+How it works: `POST /api/chat` takes the transcript (the browser keeps the
+history), runs the loop in the gateway and streams Server-Sent Events. Tool
+calls go through the same router as the MCP endpoint, so routing, timeouts
+and the audit log are identical; disabling a server removes its tools from
+the very next step. Model, limits and the Secret are set under
+`gateway.chat` in the Helm values.
+
+The free Gemini tier is small: Flash models allow about 20 requests a day,
+Flash Lite (the default, `gemini-3.5-flash-lite`) about 500, and every step of
+a turn is one request. Check your key's limits at
+https://aistudio.google.com/rate-limit and change `gateway.chat.model` if you
+want a stronger model.
+
 ## Tests
 
 ```bash
@@ -226,7 +274,12 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase2.sh   # store + MCP server, live against the k3d deployment
 ./scripts/verify-phase3.sh   # gateway, live against the k3d deployment
 ./scripts/verify-phase4.sh   # dashboard, live (incl. a Playwright run against dashboard.local.test)
+./scripts/verify-phase5.sh   # chat agent, live against the real Gemini API (reads GEMINI_API_KEY or ~/.config/urumi/gemini.env); then re-runs phases 2-4
 ```
+
+The chat agent's unit, API and E2E tests use a scripted or rule-based fake
+model, so they are deterministic, free and need no key; only
+`verify-phase5.sh` talks to Gemini (about ten requests per run).
 
 The E2E suite starts the real gateway on a fresh database with fake MCP
 upstreams, builds the dashboard and drives it in Chromium (two browser
@@ -244,6 +297,14 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   an SMTP service (e.g. an SMTP plugin configured from a Secret), which is
   out of scope for this assignment. The same goes for dashboard invites:
   the admin copies the invite link and sends it themselves.
+- **Chat history lives in the browser.** Refreshing the page starts a new
+  conversation, and only the text of earlier turns (not their tool calls) is
+  sent back to the model.
+- **The chat agent doesn't ask before destructive tools.** It acts with the
+  user's own permissions and every call is audited, but there is no
+  per-tool confirmation or allow-list until Phase 7.
+- **Chat limits are per gateway pod** (turns per minute per user, in
+  memory), like the login limiter, and the Gemini free tier has a daily cap.
 - **Login rate limiting is per gateway pod** (in memory). With more
   replicas an attacker gets that many times the attempts; a shared store
   is a Phase 8 item.

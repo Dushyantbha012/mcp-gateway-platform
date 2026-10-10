@@ -53,7 +53,9 @@ export function serverFixture(overrides: Partial<Server> = {}): Server {
 export function loggedInAs(user: User) {
   server.use(
     http.get("/api/me", () => HttpResponse.json(user)),
-    http.get("/api/meta", () => HttpResponse.json({ mcpUrl: "http://gateway.test/mcp" })),
+    http.get("/api/meta", () =>
+      HttpResponse.json({ mcpUrl: "http://gateway.test/mcp", chatEnabled: true }),
+    ),
   );
 }
 

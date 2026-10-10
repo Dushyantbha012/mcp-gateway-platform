@@ -12,6 +12,7 @@
  */
 import express from "express";
 import { createApp } from "../gateway/src/app.js";
+import type { LlmClient, LlmReply, LlmRequest } from "../gateway/src/chat/types.js";
 import { generateApiKey } from "../gateway/src/crypto/apiKeys.js";
 import { createSecretBox } from "../gateway/src/crypto/secretBox.js";
 import { insertServer } from "../gateway/src/db/servers.js";
@@ -58,12 +59,46 @@ const router = new ToolRouter(t.db, registry);
 await health.checkAll();
 health.start();
 
+/**
+ * A rule-based stand-in for Gemini, so the browser tests are deterministic and
+ * free: it picks a tool from the user's words, and once it has a tool result,
+ * answers with it. "slow" never answers (for the Stop button).
+ */
+const fakeLlm: LlmClient = {
+  async generate(req: LlmRequest): Promise<LlmReply> {
+    const last = req.turns.at(-1);
+    if (last?.role === "tool") {
+      return { text: `Tool said: ${last.results.map((r) => r.output).join(" | ")}`, calls: [] };
+    }
+    const asked = last?.role === "user" ? last.text.toLowerCase() : "";
+    const call = (name: string, args: Record<string, unknown> = {}): LlmReply => ({
+      text: "",
+      calls: [{ id: `call_${Date.now()}`, name, args }],
+    });
+    if (asked.includes("slow")) {
+      return new Promise((_, reject) =>
+        req.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+      );
+    }
+    if (asked.includes("markdown")) {
+      return {
+        text: "Here are **2 products**:\n\n1. **Mug** - $12.00\n2. **Tee** - $25.00\n\n| SKU | Stock |\n|---|---|\n| DEMO-MUG | 10 |\n\nUse `list_products` for more.",
+        calls: [],
+      };
+    }
+    if (asked.includes("orders")) return call("alpha__list_orders", { value: "today" });
+    if (asked.includes("missing")) return call("alpha__fail");
+    return { text: "Hello from the fake model.", calls: [] };
+  },
+};
+
 const app = createApp({
   db: t.db,
   box,
   registry,
   health,
   router,
+  chat: { llm: fakeLlm, turnsPerMinute: 1000, limits: { turnTimeoutMs: 20_000 } },
   config: {
     trustProxyHops: 1,
     auth: {

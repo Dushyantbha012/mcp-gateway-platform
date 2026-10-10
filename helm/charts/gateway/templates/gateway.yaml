@@ -91,6 +91,22 @@ spec:
                   name: {{ .Values.secrets.bootstrapAdmin }}
                   key: password
                   optional: true
+            # Chat agent. Optional Secret: absent = chat is off (the endpoint
+            # answers 503), everything else works.
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.gemini }}
+                  key: api-key
+                  optional: true
+            - name: GEMINI_MODEL
+              value: {{ .Values.gateway.chat.model | quote }}
+            - name: CHAT_MAX_STEPS
+              value: {{ .Values.gateway.chat.maxSteps | quote }}
+            - name: CHAT_TURN_TIMEOUT_MS
+              value: {{ .Values.gateway.chat.turnTimeoutMs | quote }}
+            - name: CHAT_TURNS_PER_MINUTE
+              value: {{ .Values.gateway.chat.turnsPerMinute | quote }}
             - name: PUBLIC_MCP_URL
               value: {{ include "gateway.publicMcpUrl" . | quote }}
             {{- with .Values.dashboardUrl }}

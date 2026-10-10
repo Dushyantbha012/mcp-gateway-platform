@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 import { createSecretBox } from "./crypto/secretBox.js";
 import { createDb, migrate, waitForDatabase } from "./db/db.js";
 import { log } from "./logger.js";
+import { GeminiClient } from "./chat/gemini.js";
 import { seed } from "./seed.js";
 import { HealthChecker } from "./upstreams/health.js";
 import { UpstreamRegistry } from "./upstreams/registry.js";
@@ -37,7 +38,20 @@ const health = new HealthChecker(db, registry, {
 const router = new ToolRouter(db, registry);
 health.start();
 
-const app = createApp({ db, box, registry, health, router, config });
+const chat = config.chat && {
+  llm: new GeminiClient({
+    apiKey: config.chat.apiKey,
+    model: config.chat.model,
+    baseUrl: config.chat.baseUrl,
+  }),
+  limits: { maxSteps: config.chat.maxSteps, turnTimeoutMs: config.chat.turnTimeoutMs },
+  turnsPerMinute: config.chat.turnsPerMinute,
+};
+log("info", chat ? "chat agent enabled" : "chat agent disabled (no GEMINI_API_KEY)", {
+  model: config.chat?.model,
+});
+
+const app = createApp({ db, box, registry, health, router, config, chat });
 const server = app.listen(config.port, "0.0.0.0", () => {
   log("info", "gateway listening", { port: config.port });
 });

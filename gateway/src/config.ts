@@ -60,6 +60,16 @@ const schema = z
       .positive()
       .max(24 * 30)
       .default(24 * 7),
+    // Chat agent. Without a key the chat endpoint answers 503 and everything
+    // else works as before. The key comes from a k8s Secret.
+    GEMINI_API_KEY: optionalString,
+    // Free-tier Flash models allow ~20 requests a day; Flash Lite allows 500.
+    GEMINI_MODEL: z.string().min(1).default("gemini-3.5-flash-lite"),
+    GEMINI_BASE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
+    CHAT_MAX_STEPS: z.coerce.number().int().min(1).max(20).default(8),
+    CHAT_TURN_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(90_000),
+    // Chat turns one user may start per minute (each turn costs several LLM requests).
+    CHAT_TURNS_PER_MINUTE: z.coerce.number().int().min(1).default(6),
     // Reverse proxies (Traefik) in front of the gateway, for the client IP
     // used by the login rate limit.
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
@@ -88,6 +98,15 @@ export interface AuthConfig {
   inviteTtlMs: number;
 }
 
+export interface ChatConfig {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+  maxSteps: number;
+  turnTimeoutMs: number;
+  turnsPerMinute: number;
+}
+
 export interface Config {
   port: number;
   databaseUrl: string;
@@ -97,6 +116,8 @@ export interface Config {
   maxResultBytes: number;
   trustProxyHops: number;
   auth: AuthConfig;
+  /** Undefined when no GEMINI_API_KEY is set: chat is switched off. */
+  chat?: ChatConfig;
   bootstrapAdmin?: { email: string; apiKey: string; password?: string };
   seedWoocommerce?: { url: string; token: string };
 }
@@ -132,6 +153,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       sessionTtlMs: e.SESSION_TTL_HOURS * 3_600_000,
       inviteTtlMs: e.INVITE_TTL_HOURS * 3_600_000,
     },
+    chat: e.GEMINI_API_KEY
+      ? {
+          apiKey: e.GEMINI_API_KEY,
+          model: e.GEMINI_MODEL,
+          baseUrl: e.GEMINI_BASE_URL,
+          maxSteps: e.CHAT_MAX_STEPS,
+          turnTimeoutMs: e.CHAT_TURN_TIMEOUT_MS,
+          turnsPerMinute: e.CHAT_TURNS_PER_MINUTE,
+        }
+      : undefined,
     bootstrapAdmin:
       e.BOOTSTRAP_ADMIN_EMAIL && e.BOOTSTRAP_ADMIN_API_KEY
         ? {
