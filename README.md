@@ -6,11 +6,12 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 Planning docs (architecture, phased build plan, testing strategy, progress
 log) live outside this repo at [`../docs`](../docs) during development.
 
-**Status:** Phase 5 — the store (WordPress + WooCommerce + MySQL), our own
+**Status:** Phase 6 — the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
 log and REST API), the team dashboard (login, servers, tools, keys, team,
 audit) and the chat agent (Gemini tool loop, streamed to the dashboard) run
-on Kubernetes.
+on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
+DeepWiki) and the brief's whole definition of done scripted end to end.
 
 ## Layout
 
@@ -18,11 +19,12 @@ on Kubernetes.
 woocommerce-mcp/   # our MCP server: 5 tools over Streamable HTTP, talks to the WooCommerce REST API
 gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API, chat agent
 dashboard/         # React/Vite admin + member UI (Tailwind + shadcn/ui), served by nginx
-e2e/               # Playwright: browser tests against the real gateway + dashboard build
+e2e/               # Playwright: browser tests against the real gateway + dashboard build, and live storefront checkout
+system/            # the definition-of-done suite: one scripted scenario against the live cluster
 helm/              # umbrella chart; charts/store = one store (MySQL, WordPress, bootstrap Job, MCP server),
                    #                 charts/gateway = gateway + its Postgres,
                    #                 charts/dashboard = the dashboard (its Ingress sends /api to the gateway)
-scripts/           # create-secrets.sh, verify-phase*.sh
+scripts/           # create-secrets.sh, register-upstreams.sh, verify-phase*.sh
 ```
 
 ## Local setup (k3d)
@@ -93,6 +95,8 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase2.sh   # store + WooCommerce MCP server
    ./scripts/verify-phase3.sh   # gateway
    ./scripts/verify-phase4.sh   # dashboard: login, invites, keys, audit, live browser test
+   ./scripts/verify-phase5.sh   # chat agent (needs the Gemini key)
+   ./scripts/verify-phase6.sh   # three upstreams + the full definition of done (needs the GitHub token too)
    ```
 
    Each accepts `SKIP_DEPLOY=1` to check the running deployment without
@@ -196,6 +200,66 @@ Every tool call (from any client) is written to the audit log with user,
 key, server, tool, time, duration and outcome (`success`, `tool_error`,
 `timeout`, `unreachable`, `rejected`).
 
+## Connect more servers (GitHub, DeepWiki)
+
+The brief needs at least three upstreams. WooCommerce is seeded; the other two
+are added the way an admin would, through the gateway's API (the dashboard's
+"Add server" form calls the same endpoint):
+
+1. Create a **read-only** fine-grained GitHub token (Settings → Developer
+   settings → Fine-grained tokens; public repositories only; Metadata,
+   Contents, Issues and Pull requests set to _Read_, nothing with write).
+   Read-only matters: GitHub's server exposes 49 tools, many of which write,
+   and the chat agent has no per-tool permissions until Phase 7. Save it
+   outside the repo:
+
+   ```bash
+   mkdir -p ~/.config/urumi && install -m 600 /dev/null ~/.config/urumi/github.env
+   echo 'GITHUB_MCP_TOKEN=github_pat_...' > ~/.config/urumi/github.env
+   ```
+
+2. Register both (idempotent; existing servers are never touched):
+
+   ```bash
+   ./scripts/register-upstreams.sh                  # DeepWiki (no auth) + GitHub (bearer)
+   ./scripts/register-upstreams.sh --rotate-github  # replace GitHub's token later
+   ```
+
+The token is sent to the gateway once, stored AES-256-GCM-encrypted in its
+Postgres, and added to GitHub calls server-side; no response, log or Helm
+value ever contains it (`verify-phase6.sh` greps for it). Tools appear as
+`github__*` and `deepwiki__*` next to `woocommerce__*`.
+
+## Full demo script (the definition of done)
+
+`./scripts/verify-phase6.sh` runs all of this automatically
+(`system/dod.system.test.ts`). To do it by hand, as in the demo video:
+
+1. **Store** — http://store.local.test: add a product, check out with Cash on
+   delivery; the order is in http://store.local.test/wp-admin → WooCommerce → Orders.
+2. **User A, chat** — log in to the dashboard as a member, open Chat: _"Create
+   a product named Demo Mug priced 9.75"_ (it appears on the storefront), place
+   an order for it by hand, then _"What orders came in today?"_.
+3. **User B, Claude Code** — an admin invites B (Team → Invite member); B opens
+   the link, sets a password, creates a key under API keys, and runs the
+   command the Tools page shows:
+
+   ```bash
+   claude mcp add --transport http gateway http://gateway.local.test/mcp --header "Authorization: Bearer <B's key>"
+   ```
+
+   In Claude Code, `/mcp` lists the tools of every server. Ask _"what orders
+   came in today?"_. For two upstreams in one prompt: _"Use DeepWiki to look up
+   the structure of the woocommerce/woocommerce repo and list the products in
+   my store."_
+4. **Control** — as admin: revoke B's key (API keys or Team) and B's next call
+   is rejected; disable DeepWiki and its tools vanish from chat and from
+   Claude Code; `kubectl -n urumi scale deploy/platform-store-woocommerce-mcp
+   --replicas=0` shows WooCommerce Unreachable while GitHub and DeepWiki keep
+   working (scale back to 1 to recover).
+5. **Audit** — the Audit page lists every call above under the right user,
+   with source `mcp` (Claude Code) or `chat`.
+
 ## The dashboard
 
 http://dashboard.local.test — one origin for the browser: the dashboard's
@@ -275,7 +339,19 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase3.sh   # gateway, live against the k3d deployment
 ./scripts/verify-phase4.sh   # dashboard, live (incl. a Playwright run against dashboard.local.test)
 ./scripts/verify-phase5.sh   # chat agent, live against the real Gemini API (reads GEMINI_API_KEY or ~/.config/urumi/gemini.env); then re-runs phases 2-4
+./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real Gemini, GitHub, DeepWiki), then re-runs phases 2-5
 ```
+
+The definition-of-done suite alone (cluster up, upstreams registered):
+
+```bash
+SYSTEM_GATEWAY_URL=http://gateway.local.test SYSTEM_DASHBOARD_URL=http://dashboard.local.test \
+SYSTEM_STORE_URL=http://store.local.test SYSTEM_ADMIN_KEY=... \
+SYSTEM_STORE_ADMIN_USER=... SYSTEM_STORE_ADMIN_PASSWORD=... npx vitest run --project system
+```
+
+It needs a browser for the storefront step (`npx playwright install chromium`
+in `e2e/`, once) and takes about a minute and roughly 15 Gemini requests.
 
 The chat agent's unit, API and E2E tests use a scripted or rule-based fake
 model, so they are deterministic, free and need no key; only
@@ -302,7 +378,14 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   sent back to the model.
 - **The chat agent doesn't ask before destructive tools.** It acts with the
   user's own permissions and every call is audited, but there is no
-  per-tool confirmation or allow-list until Phase 7.
+  per-tool confirmation or allow-list until Phase 7. Until then the GitHub
+  upstream uses a read-only token, so its write tools exist but GitHub
+  rejects them (HTTP 403). WooCommerce's `create_product` and
+  `update_order_status` do work for every member.
+- **GitHub and DeepWiki are external.** The suite needs internet access and
+  can fail for reasons that aren't ours (DeepWiki down, GitHub token
+  expired); the gateway then marks that one server Unreachable and the rest
+  keep working.
 - **Chat limits are per gateway pod** (turns per minute per user, in
   memory), like the login limiter, and the Gemini free tier has a daily cap.
 - **Login rate limiting is per gateway pod** (in memory). With more
