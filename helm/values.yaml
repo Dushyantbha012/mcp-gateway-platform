@@ -19,5 +19,7 @@ store:
 gateway:
   enabled: true
 
+# The React dashboard (nginx) + the Ingress that serves it and the gateway's
+# /api on one host. See charts/dashboard/values.yaml.
 dashboard:
-  enabled: false # becomes true in Phase 4
+  enabled: true

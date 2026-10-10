@@ -84,6 +84,21 @@ spec:
                   name: {{ .Values.secrets.bootstrapAdmin }}
                   key: api-key
                   optional: true
+            # Dashboard login for the bootstrap admin, set once on first start.
+            - name: BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bootstrapAdmin }}
+                  key: password
+                  optional: true
+            - name: PUBLIC_MCP_URL
+              value: {{ include "gateway.publicMcpUrl" . | quote }}
+            {{- with .Values.dashboardUrl }}
+            - name: DASHBOARD_URL
+              value: {{ . | quote }}
+            - name: COOKIE_SECURE
+              value: {{ hasPrefix "https://" . | quote }}
+            {{- end }}
             {{- if .Values.seedWoocommerce.enabled }}
             - name: SEED_WOOCOMMERCE_URL
               value: {{ include "gateway.woocommerceUrl" . | quote }}
@@ -151,8 +166,8 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          # /mcp for MCP clients, /api for the dashboard (Phase 4) and admin
-          # tooling, /healthz for external uptime checks.
+          # /mcp for MCP clients, /api for scripts and admin tooling (the
+          # dashboard reaches /api through its own host), /healthz for uptime checks.
           {{- range list "/mcp" "/api" "/healthz" }}
           - path: {{ . }}
             pathType: Prefix

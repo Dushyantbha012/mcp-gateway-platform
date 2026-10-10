@@ -19,8 +19,14 @@ gateway:
       cert-manager.io/cluster-issuer: letsencrypt-prod
   storageClassName: local-path
   gateway:
-    image: ghcr.io/CHANGE_ME/gateway:0.3.0
+    image: ghcr.io/CHANGE_ME/gateway:0.4.0
+  # https:// -> the session cookie also gets the Secure flag.
+  dashboardUrl: https://dashboard.CHANGE_ME.example
 
 dashboard:
   ingress:
     host: dashboard.CHANGE_ME.example
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+  image: ghcr.io/CHANGE_ME/dashboard:0.4.0

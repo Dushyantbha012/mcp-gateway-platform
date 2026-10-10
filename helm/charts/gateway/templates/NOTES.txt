@@ -1,5 +1,8 @@
 Gateway MCP endpoint: {{ include "gateway.url" . }}/mcp
 Admin REST API:       {{ include "gateway.url" . }}/api
+{{- with .Values.dashboardUrl }}
+Dashboard:            {{ . }}
+{{- end }}
 
 Bootstrap admin API key (send as "Authorization: Bearer <key>"):
   kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secrets.bootstrapAdmin }} -o jsonpath='{.data.api-key}' | base64 -d

@@ -118,3 +118,6 @@ jobs:
 
       - name: Build gateway image
         run: docker build -f gateway/Dockerfile -t gateway:ci .
+
+      - name: Build dashboard image
+        run: docker build -f dashboard/Dockerfile -t dashboard:ci .

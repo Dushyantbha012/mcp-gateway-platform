@@ -1,0 +1,122 @@
+{{- $name := include "dashboard.fullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dashboard.labels" . | nindent 4 }}
+    {{- include "dashboard.selector" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "dashboard.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dashboard.labels" . | nindent 4 }}
+    {{- include "dashboard.selector" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "dashboard.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dashboard.labels" . | nindent 8 }}
+        {{- include "dashboard.selector" . | nindent 8 }}
+    spec:
+      # Static files only: no Kubernetes API access, no secrets, no config.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101 # the "nginx" user in nginx-unprivileged
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dashboard
+          image: {{ .Values.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # nginx-unprivileged keeps its pid file and temp files in /tmp.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          # Same reason as the gateway's: keep serving while Traefik learns
+          # this pod is going away.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dashboard.labels" . | nindent 4 }}
+    {{- include "dashboard.selector" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.global.ingress.className | default "traefik" }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName | default (printf "%s-tls" $name) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # One origin for the browser: the REST API on the dashboard's own
+          # host, so the session cookie is first-party and SameSite=Strict.
+          # (Longest prefix wins, so /api never reaches nginx.)
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "dashboard.gatewayService" . }}
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http

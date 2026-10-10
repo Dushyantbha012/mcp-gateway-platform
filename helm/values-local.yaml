@@ -8,6 +8,7 @@ gateway:
   ingress:
     host: gateway.local.test
   storageClassName: local-path
+  dashboardUrl: http://dashboard.local.test # http locally: no Secure cookie flag
 
 dashboard:
   ingress:

@@ -1,0 +1,5 @@
+Dashboard: {{ include "dashboard.url" . }}
+
+Bootstrap admin login (email + password from the gateway-bootstrap-admin Secret):
+  kubectl -n {{ .Release.Namespace }} get secret gateway-bootstrap-admin -o jsonpath='{.data.email}' | base64 -d; echo
+  kubectl -n {{ .Release.Namespace }} get secret gateway-bootstrap-admin -o jsonpath='{.data.password}' | base64 -d; echo

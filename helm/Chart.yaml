@@ -4,10 +4,11 @@ description: >
   WooCommerce store + WooCommerce MCP server + Gateway + Dashboard, deployed
   as one umbrella Helm chart. The store (WordPress, MySQL, bootstrap Job and
   its MCP server) is the `store` subchart, the gateway (with its Postgres)
-  the `gateway` subchart; dashboard lands in Phase 4.
+  the `gateway` subchart, the dashboard (static files + the Ingress that
+  puts it and the gateway's /api on one origin) the `dashboard` subchart.
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"
 dependencies:
   - name: store
     version: 0.1.0
@@ -17,3 +18,7 @@ dependencies:
     version: 0.1.0
     repository: file://charts/gateway
     condition: gateway.enabled
+  - name: dashboard
+    version: 0.1.0
+    repository: file://charts/dashboard
+    condition: dashboard.enabled
