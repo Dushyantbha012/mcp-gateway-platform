@@ -106,6 +106,19 @@ describe("UpstreamConnection", () => {
     );
   });
 
+  it("reports DNS failures and blocked ports with their reason", async () => {
+    await expectUpstreamError(
+      connect("http://nothing.invalid/mcp").listTools(),
+      "unreachable",
+      /is unreachable \(ENOTFOUND\)/,
+    );
+    await expectUpstreamError(
+      connect("http://127.0.0.1:1/mcp").listTools(),
+      "unreachable",
+      /is unreachable \(bad port\)/,
+    );
+  });
+
   it("reports a rejected credential clearly", async () => {
     const f = await fake({ behavior: "unauthorized" });
     await expectUpstreamError(

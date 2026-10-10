@@ -35,6 +35,13 @@ export class UpstreamRegistry {
     await Promise.all(gone.map(([, entry]) => entry.conn.close()));
   }
 
+  /** Drops one server's session (it was disabled or deleted). */
+  async forget(id: string): Promise<void> {
+    const entry = this.entries.get(id);
+    this.entries.delete(id);
+    await entry?.conn.close();
+  }
+
   async closeAll(): Promise<void> {
     await this.retain(new Set());
   }

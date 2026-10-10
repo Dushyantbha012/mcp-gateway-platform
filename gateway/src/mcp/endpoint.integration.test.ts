@@ -79,7 +79,8 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     userKey = k.key;
     userKeyId = (await insertApiKey(t.db, { userId: user.id, name: "cli", ...k })).id;
 
-    http = createApp({ db: t.db, router: new ToolRouter(t.db, registry) }).listen(0, "127.0.0.1");
+    const router = new ToolRouter(t.db, registry);
+    http = createApp({ db: t.db, box, registry, health, router }).listen(0, "127.0.0.1");
     await new Promise((resolve) => http.once("listening", resolve));
     baseUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
   });

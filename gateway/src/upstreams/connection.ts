@@ -64,9 +64,13 @@ export function describeError(err: unknown, slug: string, timeoutMs: number): Up
       `Upstream '${slug}' returned an error: ${err.message.slice(0, 200)}`,
     );
   }
-  const cause = (err as { cause?: { code?: string } } | undefined)?.cause;
-  if (cause?.code) {
-    return new UpstreamError("unreachable", `Upstream '${slug}' is unreachable (${cause.code})`);
+  // fetch hides the network reason in `cause` (sometimes an AggregateError,
+  // when several addresses were tried): ECONNREFUSED, ENOTFOUND, "bad port"...
+  type Cause = { code?: string; message?: string; errors?: { code?: string }[] };
+  const cause = (err as { cause?: Cause } | undefined)?.cause;
+  const reason = cause?.code ?? cause?.errors?.find((e) => e.code)?.code ?? cause?.message;
+  if (reason) {
+    return new UpstreamError("unreachable", `Upstream '${slug}' is unreachable (${reason})`);
   }
   const message = err instanceof Error ? err.message : String(err);
   return new UpstreamError("unreachable", `Upstream '${slug}' failed: ${message.slice(0, 200)}`);
