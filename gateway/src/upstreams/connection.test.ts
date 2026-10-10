@@ -130,7 +130,7 @@ describe("UpstreamConnection", () => {
 
   it("reports an HTTP 500 as unreachable", async () => {
     const f = await fake({ behavior: "http500" });
-    await expectUpstreamError(connect(f.url).listTools(), "unreachable", /returned an error/);
+    await expectUpstreamError(connect(f.url).listTools(), "unreachable", /returned HTTP 500$/);
   });
 
   it("refuses results larger than the limit", async () => {

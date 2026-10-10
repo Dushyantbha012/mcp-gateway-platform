@@ -1,22 +1,40 @@
 import { randomBytes } from "node:crypto";
 import { createApp } from "../app.js";
+import type { AuthConfig } from "../config.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
+import { hashPassword } from "../crypto/passwords.js";
 import { createSecretBox } from "../crypto/secretBox.js";
 import { insertApiKey } from "../db/apiKeys.js";
 import type { Db } from "../db/db.js";
 import type { Role } from "../db/schema.js";
-import { createUser } from "../db/users.js";
+import { createUser, setPasswordHash } from "../db/users.js";
 import { HealthChecker } from "../upstreams/health.js";
 import { UpstreamRegistry } from "../upstreams/registry.js";
 import { ToolRouter } from "../upstreams/router.js";
 
+export const TEST_ORIGIN = "http://dashboard.test";
+
+export const testAuthConfig: AuthConfig = {
+  dashboardUrl: TEST_ORIGIN,
+  publicMcpUrl: "http://gateway.test/mcp",
+  allowedOrigins: [TEST_ORIGIN],
+  cookieSecure: false,
+  sessionTtlMs: 3_600_000,
+  inviteTtlMs: 3_600_000,
+};
+
 /** The gateway app wired exactly as index.ts does, with short test timeouts. */
-export function buildTestApp(db: Db) {
+export function buildTestApp(
+  db: Db,
+  auth: Partial<AuthConfig> = {},
+  opts: { trustProxyHops?: number } = {},
+) {
   const box = createSecretBox(randomBytes(32).toString("base64"));
   const registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const router = new ToolRouter(db, registry);
-  const deps = { db, box, registry, health, router };
+  const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
+  const deps = { db, box, registry, health, router, config };
   return { ...deps, app: createApp(deps) };
 }
 
@@ -26,4 +44,11 @@ export async function userWithKey(db: Db, email: string, role: Role) {
   const generated = generateApiKey();
   const info = await insertApiKey(db, { userId: user.id, name: "test", ...generated });
   return { user, key: generated.key, keyId: info.id };
+}
+
+/** A user who can log in to the dashboard with `password`. */
+export async function userWithPassword(db: Db, email: string, role: Role, password: string) {
+  const user = await createUser(db, { email, name: email.split("@")[0], role });
+  await setPasswordHash(db, user.id, await hashPassword(password));
+  return { user, email, password };
 }

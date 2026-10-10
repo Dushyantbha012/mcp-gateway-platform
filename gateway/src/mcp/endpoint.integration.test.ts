@@ -16,6 +16,7 @@ import { queryAudit } from "../db/audit.js";
 import { insertServer } from "../db/servers.js";
 import { createUser } from "../db/users.js";
 import { deadUrl, startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
+import { testAuthConfig } from "../test/testApp.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 import { HealthChecker } from "../upstreams/health.js";
 import { UpstreamRegistry } from "../upstreams/registry.js";
@@ -43,25 +44,29 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     healthy = await startFakeUpstream({ toolNames: ["list_orders"] });
     hanging = await startFakeUpstream({ toolNames: ["slow_tool"] });
 
-    const add = (slug: string, url: string, credential?: string) => {
+    // Short timeouts only where the test needs them to fire (the hanging
+    // upstream). The healthy one gets a generous budget so a loaded CI
+    // machine can't turn it into a false "unreachable".
+    const add = (slug: string, url: string, credential?: string, timeoutMs = 500) => {
       const id = randomUUID();
       return insertServer(t.db, {
         id,
         slug,
         name: slug,
         url,
-        timeout_ms: 500,
+        timeout_ms: timeoutMs,
         ...(credential
           ? { auth_type: "bearer" as const, credential_ciphertext: box.encrypt(credential, id) }
           : {}),
       });
     };
-    await add("woocommerce", healthy.url, "upstream-token");
+    await add("woocommerce", healthy.url, "upstream-token", 10_000);
     await add("hanging", hanging.url);
     await add("dead", await deadUrl());
 
     registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
-    const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
+    // Each server's check is capped by min(its timeout, listTimeoutMs).
+    const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 5_000 });
     await health.checkAll(); // hanging + dead -> unreachable; then make "hanging" look healthy
     await t.db
       .updateTable("mcp_servers")
@@ -80,7 +85,14 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     userKeyId = (await insertApiKey(t.db, { userId: user.id, name: "cli", ...k })).id;
 
     const router = new ToolRouter(t.db, registry);
-    http = createApp({ db: t.db, box, registry, health, router }).listen(0, "127.0.0.1");
+    http = createApp({
+      db: t.db,
+      box,
+      registry,
+      health,
+      router,
+      config: { auth: testAuthConfig, trustProxyHops: 0 },
+    }).listen(0, "127.0.0.1");
     await new Promise((resolve) => http.once("listening", resolve));
     baseUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
   });

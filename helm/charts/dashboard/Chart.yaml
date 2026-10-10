@@ -1,0 +1,10 @@
+apiVersion: v2
+name: dashboard
+description: >
+  The React dashboard as static files on an unprivileged nginx, and the
+  Ingress that puts it and the gateway's REST API on one origin
+  (/ -> dashboard, /api -> gateway), so the session cookie can be
+  SameSite=Strict and no CORS is needed.
+type: application
+version: 0.1.0
+appVersion: "0.4.0"

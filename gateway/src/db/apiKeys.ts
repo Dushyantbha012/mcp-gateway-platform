@@ -2,12 +2,18 @@ import { sql } from "kysely";
 import type { Db } from "./db.js";
 import type { ApiKey, Role } from "./schema.js";
 
-/** Everything a request needs to know about who is calling. */
+/**
+ * Everything a request needs to know about who is calling. MCP clients
+ * authenticate with an API key; the dashboard with a session cookie. Exactly
+ * one of keyId / sessionId is set, matching authMethod.
+ */
 export interface Principal {
   userId: string;
   email: string;
   role: Role;
-  keyId: string;
+  authMethod: "api_key" | "session";
+  keyId: string | null;
+  sessionId: string | null;
 }
 
 /** Key metadata safe to return to clients: never the hash. */
@@ -47,7 +53,7 @@ export async function findPrincipalByKeyHash(db: Db, hash: Buffer): Promise<Prin
     .where("k.revoked_at", "is", null)
     .where("u.disabled_at", "is", null)
     .executeTakeFirst();
-  return row;
+  return row && { ...row, authMethod: "api_key", sessionId: null };
 }
 
 /** Records use at most once a minute per key, so calls don't each cost a write. */

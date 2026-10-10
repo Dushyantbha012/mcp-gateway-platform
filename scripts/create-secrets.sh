@@ -61,4 +61,16 @@ create gateway-bootstrap-admin \
   --from-literal=email="${GATEWAY_ADMIN_EMAIL:-admin@example.com}" \
   --from-literal=api-key="$api_key"
 unset api_key
-echo "Gateway admin API key: kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.api-key}' | base64 -d"
+
+# Dashboard password for the bootstrap admin (added in Phase 4). Patched in
+# only if missing, so an existing install keeps its email and API key; the
+# gateway sets it once, on its next start, if the admin has no password yet.
+if [ -z "$(kubectl -n "$NAMESPACE" get secret gateway-bootstrap-admin -o jsonpath='{.data.password}')" ]; then
+  kubectl -n "$NAMESPACE" patch secret gateway-bootstrap-admin --type merge \
+    -p "{\"stringData\":{\"password\":\"$(rand 16)\"}}" >/dev/null
+  echo "secret/gateway-bootstrap-admin: added dashboard password"
+fi
+
+echo "Gateway admin API key:  kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.api-key}' | base64 -d"
+echo "Dashboard admin login:  kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.email}' | base64 -d"
+echo "                        kubectl -n $NAMESPACE get secret gateway-bootstrap-admin -o jsonpath='{.data.password}' | base64 -d"

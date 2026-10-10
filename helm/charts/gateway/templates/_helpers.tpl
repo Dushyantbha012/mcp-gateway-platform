@@ -19,6 +19,10 @@ app.kubernetes.io/component: {{ index . 1 }}
 {{- printf "%s://%s" (ternary "https" "http" .Values.ingress.tls) .Values.ingress.host -}}
 {{- end -}}
 
+{{- define "gateway.publicMcpUrl" -}}
+{{- .Values.publicMcpUrl | default (printf "%s/mcp" (include "gateway.url" .)) -}}
+{{- end -}}
+
 {{/* The store subchart's MCP Service in this release, unless overridden. */}}
 {{- define "gateway.woocommerceUrl" -}}
 {{- if .Values.seedWoocommerce.url -}}

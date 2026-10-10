@@ -2,6 +2,7 @@ import { Kysely, PostgresDialect, sql } from "kysely";
 import { Migrator, type Migration } from "kysely/migration";
 import pg from "pg";
 import * as m001 from "./migrations/001_initial.js";
+import * as m002 from "./migrations/002_dashboard_auth.js";
 import type { Database } from "./schema.js";
 
 export type Db = Kysely<Database>;
@@ -10,6 +11,7 @@ export type Db = Kysely<Database>;
 // compiled image needs no extra files and the order is explicit.
 const migrations: Record<string, Migration> = {
   "001_initial": m001,
+  "002_dashboard_auth": m002,
 };
 
 export function createDb(connectionString: string, max = 10): Db {

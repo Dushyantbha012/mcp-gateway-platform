@@ -309,5 +309,37 @@ describe.skipIf(!hasTestDb)("REST API", () => {
 
       expect((await as(admin).get("/api/audit?limit=9999")).status).toBe(400);
     });
+
+    it("filters by outcome and source", async () => {
+      for (const [source, outcome] of [
+        ["chat", "timeout"],
+        ["mcp", "rejected"],
+        ["chat", "success"],
+      ] as const) {
+        await insertAuditEntry(t.db, {
+          user_id: member.user.id,
+          user_email: member.user.email,
+          api_key_id: null,
+          source,
+          server_slug: "woocommerce",
+          tool_name: `woocommerce__${source}_${outcome}`,
+          duration_ms: 5,
+          outcome,
+          error: null,
+        });
+      }
+      const tools = async (query: string) =>
+        ((await as(admin).get(`/api/audit?${query}`)).body as { tool: string }[]).map(
+          (e) => e.tool,
+        );
+      expect(await tools("outcome=timeout")).toEqual(["woocommerce__chat_timeout"]);
+      expect(await tools("source=chat")).toEqual([
+        "woocommerce__chat_success",
+        "woocommerce__chat_timeout",
+      ]);
+      expect(await tools("source=chat&outcome=success")).toEqual(["woocommerce__chat_success"]);
+      expect((await as(admin).get("/api/audit?outcome=great")).status).toBe(400);
+      expect((await as(admin).get("/api/audit?source=email")).status).toBe(400);
+    });
   });
 });

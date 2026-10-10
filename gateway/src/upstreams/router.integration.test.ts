@@ -34,7 +34,9 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
       userId: user.id,
       email: user.email,
       role: "member",
+      authMethod: "api_key",
       keyId: key.id,
+      sessionId: null,
     };
     ctx = { principal, source: "mcp" };
   });

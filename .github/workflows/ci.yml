@@ -45,6 +45,51 @@ jobs:
 
       - run: npm run build
 
+  # Browser tests: the real dashboard build + the real gateway app (e2e/harness.ts)
+  # against a throwaway Postgres DB, with fake MCP upstreams.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.11-alpine
+        env:
+          POSTGRES_USER: gateway_test
+          POSTGRES_PASSWORD: gateway_test
+          POSTGRES_DB: gateway_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://gateway_test:gateway_test@localhost:5433/gateway_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - run: npm run test:e2e
+
+      - name: Upload Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+
   helm:
     runs-on: ubuntu-latest
     steps:
@@ -73,3 +118,6 @@ jobs:
 
       - name: Build gateway image
         run: docker build -f gateway/Dockerfile -t gateway:ci .
+
+      - name: Build dashboard image
+        run: docker build -f dashboard/Dockerfile -t dashboard:ci .

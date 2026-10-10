@@ -1,0 +1,24 @@
+# Defaults for the dashboard. Environment-specific values (ingress host,
+# TLS, image) are set from the umbrella chart's values-local.yaml /
+# values-prod.yaml under the `dashboard:` key.
+
+global:
+  ingress:
+    className: traefik
+
+ingress:
+  host: dashboard.local.test
+  tls: false
+  tlsSecretName: ""
+  annotations: {}
+
+# The gateway Service that /api on the dashboard host is routed to.
+# Empty = "<release>-gateway", the gateway subchart in this release.
+gatewayService: ""
+
+image: mcp-gateway/dashboard:dev
+imagePullPolicy: IfNotPresent
+replicas: 1
+resources:
+  requests: { cpu: 10m, memory: 16Mi }
+  limits: { cpu: 200m, memory: 64Mi }
