@@ -3,7 +3,13 @@
 store:
   ingress:
     host: store.CHANGE_ME.example
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
   storageClassName: local-path # k3s default; change if the VPS uses something else
+  woocommerceMcp:
+    # Pulled from a registry on the VPS instead of `k3d image import`.
+    image: ghcr.io/CHANGE_ME/woocommerce-mcp:0.2.0
 
 gateway:
   ingress:

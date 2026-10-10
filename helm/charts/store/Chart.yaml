@@ -1,0 +1,10 @@
+apiVersion: v2
+name: store
+description: >
+  One WooCommerce store: MySQL, WordPress + WooCommerce, an idempotent WP-CLI
+  bootstrap Job, and the store's own WooCommerce MCP server (ClusterIP only).
+  Used as a subchart of the umbrella chart today, and installable on its own
+  per namespace for multi-store provisioning later.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

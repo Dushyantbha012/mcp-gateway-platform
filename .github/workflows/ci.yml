@@ -21,4 +21,33 @@ jobs:
 
       - run: npm run format:check
 
+      # Live integration tests skip themselves here (no cluster).
       - run: npm test
+
+      - run: npm run build
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint chart with local and prod values
+        run: |
+          helm lint helm -f helm/values-local.yaml
+          helm lint helm -f helm/values-prod.yaml
+
+      - name: Render templates for both environments
+        run: |
+          helm template platform helm -f helm/values-local.yaml > /dev/null
+          helm template platform helm -f helm/values-prod.yaml > /dev/null
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build only (no push) so a broken Dockerfile fails CI.
+      - name: Build woocommerce-mcp image
+        run: docker build -f woocommerce-mcp/Dockerfile -t woocommerce-mcp:ci .

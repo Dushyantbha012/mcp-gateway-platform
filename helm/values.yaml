@@ -1,17 +1,16 @@
 # Base values shared by local and production. Environment-specific overrides
 # live in values-local.yaml / values-prod.yaml — see docs/02-architecture.md
-# for what differs and why. No real workload templates yet (Phase 1
-# scaffold) — sections below are placeholders for Phase 2+.
+# for what differs and why.
 
 global:
   ingress:
     className: traefik
 
+# WordPress + WooCommerce + MySQL + the store's WooCommerce MCP server.
+# Every key under here is passed to the store subchart - see
+# charts/store/values.yaml for the full list and defaults.
 store:
-  enabled: false # becomes true in Phase 2
-
-woocommerceMcp:
-  enabled: false # becomes true in Phase 2
+  enabled: true
 
 gateway:
   enabled: false # becomes true in Phase 3
