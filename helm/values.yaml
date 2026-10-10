@@ -1,0 +1,20 @@
+# Base values shared by local and production. Environment-specific overrides
+# live in values-local.yaml / values-prod.yaml — see docs/02-architecture.md
+# for what differs and why. No real workload templates yet (Phase 1
+# scaffold) — sections below are placeholders for Phase 2+.
+
+global:
+  ingress:
+    className: traefik
+
+store:
+  enabled: false # becomes true in Phase 2
+
+woocommerceMcp:
+  enabled: false # becomes true in Phase 2
+
+gateway:
+  enabled: false # becomes true in Phase 3
+
+dashboard:
+  enabled: false # becomes true in Phase 4

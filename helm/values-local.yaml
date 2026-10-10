@@ -1,0 +1,13 @@
+# Overrides for local k3d. Merge with: helm install ... -f values.yaml -f values-local.yaml
+store:
+  ingress:
+    host: store.local.test
+  storageClassName: local-path
+
+gateway:
+  ingress:
+    host: gateway.local.test
+
+dashboard:
+  ingress:
+    host: dashboard.local.test

@@ -1,0 +1,15 @@
+# Throwaway Postgres for local integration tests (Gateway, starting Phase 3).
+# Not used in production — the real deployment's Postgres comes from the
+# Helm chart with its own PVC. Run with:
+#   docker compose -f docker-compose.test.yml up -d
+services:
+  test-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gateway_test
+      POSTGRES_PASSWORD: gateway_test
+      POSTGRES_DB: gateway_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data

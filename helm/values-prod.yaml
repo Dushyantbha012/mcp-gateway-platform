@@ -1,0 +1,14 @@
+# Overrides for the production-like VPS (k3s). Real domain, TLS and storage
+# class are filled in during Phase 9 — placeholders for now.
+store:
+  ingress:
+    host: store.CHANGE_ME.example
+  storageClassName: local-path # k3s default; change if the VPS uses something else
+
+gateway:
+  ingress:
+    host: gateway.CHANGE_ME.example
+
+dashboard:
+  ingress:
+    host: dashboard.CHANGE_ME.example
