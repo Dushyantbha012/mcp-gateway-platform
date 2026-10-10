@@ -18,6 +18,8 @@ storageClassName: "" # empty = cluster default
 global:
   ingress:
     className: traefik
+  # Only pods with this label set to "true" may call the MCP server.
+  mcpClientLabel: urumi.ai/mcp-client
 
 ingress:
   host: store.local.test

@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect } from "kysely";
+import { Kysely, PostgresDialect, sql } from "kysely";
 import { Migrator, type Migration } from "kysely/migration";
 import pg from "pg";
 import * as m001 from "./migrations/001_initial.js";
@@ -15,6 +15,29 @@ const migrations: Record<string, Migration> = {
 export function createDb(connectionString: string, max = 10): Db {
   const pool = new pg.Pool({ connectionString, max, connectionTimeoutMillis: 5_000 });
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
+}
+
+/**
+ * Waits for Postgres to accept connections. On a fresh install the gateway
+ * pod usually starts before Postgres is ready (its headless Service has no
+ * DNS record until then); waiting here avoids a crash-restart loop with
+ * growing back-off.
+ */
+export async function waitForDatabase(
+  db: Db,
+  opts: { attempts: number; delayMs: number; onRetry?: (error: string) => void },
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await sql`select 1`.execute(db);
+      return;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (attempt >= opts.attempts) throw new Error(`Database unavailable: ${error}`);
+      opts.onRetry?.(error);
+      await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
+    }
+  }
 }
 
 /**

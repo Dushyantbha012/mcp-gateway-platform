@@ -7,6 +7,7 @@ store:
 gateway:
   ingress:
     host: gateway.local.test
+  storageClassName: local-path
 
 dashboard:
   ingress:

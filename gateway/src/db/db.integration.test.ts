@@ -4,7 +4,7 @@ import { generateApiKey } from "../crypto/apiKeys.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 import { insertApiKey, findPrincipalByKeyHash, revokeApiKey, touchApiKey } from "./apiKeys.js";
 import { insertAuditEntry, queryAudit } from "./audit.js";
-import { createDb, migrate } from "./db.js";
+import { createDb, migrate, waitForDatabase } from "./db.js";
 import {
   insertServer,
   recordServerHealth,
@@ -13,6 +13,18 @@ import {
   deleteServer,
 } from "./servers.js";
 import { createUser } from "./users.js";
+
+describe("waitForDatabase", () => {
+  it("retries, then fails with a clear error when Postgres never comes up", async () => {
+    const db = createDb("postgres://u:p@127.0.0.1:9/none", 1);
+    const retries: string[] = [];
+    await expect(
+      waitForDatabase(db, { attempts: 3, delayMs: 10, onRetry: (e) => retries.push(e) }),
+    ).rejects.toThrow(/Database unavailable/);
+    expect(retries).toHaveLength(2);
+    await db.destroy();
+  });
+});
 
 describe.skipIf(!hasTestDb)("migrations", () => {
   const created: TestDatabase[] = [];

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: gateway
+description: >
+  The team MCP gateway: its own Postgres (users, hashed API keys, upstream
+  servers, audit log), the gateway Deployment that aggregates upstream MCP
+  servers behind one Streamable HTTP endpoint and an admin REST API, its
+  Ingress, and NetworkPolicies that keep Postgres private to it.
+type: application
+version: 0.1.0
+appVersion: "0.3.0"

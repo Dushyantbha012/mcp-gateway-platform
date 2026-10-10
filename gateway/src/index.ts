@@ -1,7 +1,7 @@
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createSecretBox } from "./crypto/secretBox.js";
-import { createDb, migrate } from "./db/db.js";
+import { createDb, migrate, waitForDatabase } from "./db/db.js";
 import { log } from "./logger.js";
 import { seed } from "./seed.js";
 import { HealthChecker } from "./upstreams/health.js";
@@ -12,6 +12,11 @@ const config = loadConfig();
 const db = createDb(config.databaseUrl);
 const box = createSecretBox(config.encryptionKey);
 
+await waitForDatabase(db, {
+  attempts: 50, // 100s: inside the startup probe's 120s budget
+  delayMs: 2_000,
+  onRetry: (error) => log("warn", "waiting for database", { error }),
+});
 const applied = await migrate(db);
 if (applied.length) log("info", "applied migrations", { migrations: applied });
 await seed(db, box, config);

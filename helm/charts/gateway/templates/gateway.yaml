@@ -1,0 +1,156 @@
+{{- $name := include "gateway.fullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.selector" (list . "gateway") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "gateway.selector" (list . "gateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.selector" (list . "gateway") | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gateway.selector" (list . "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gateway.labels" . | nindent 8 }}
+        {{- include "gateway.selector" (list . "gateway") | nindent 8 }}
+        # Lets this pod through the woocommerce-mcp NetworkPolicy.
+        {{ .Values.global.mcpClientLabel }}: "true"
+    spec:
+      # Doesn't talk to the Kubernetes API (until Phase 8 manages Secrets).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the "node" user in node:alpine
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image }}
+          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.gateway.port | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.db }}
+                  key: password
+            # $(DB_PASSWORD) is expanded by the kubelet from the variable above,
+            # so the password stays in the Secret, not in the pod spec. It's
+            # hex, so it needs no URL escaping.
+            - name: DATABASE_URL
+              value: {{ printf "postgres://%s:$(DB_PASSWORD)@%s-postgres:5432/%s" .Values.postgres.user $name .Values.postgres.database | quote }}
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.encryptionKey }}
+                  key: key
+            - name: HEALTH_INTERVAL_MS
+              value: {{ .Values.gateway.healthIntervalMs | quote }}
+            - name: LIST_TIMEOUT_MS
+              value: {{ .Values.gateway.listTimeoutMs | quote }}
+            - name: BOOTSTRAP_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bootstrapAdmin }}
+                  key: email
+                  optional: true
+            - name: BOOTSTRAP_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bootstrapAdmin }}
+                  key: api-key
+                  optional: true
+            {{- if .Values.seedWoocommerce.enabled }}
+            - name: SEED_WOOCOMMERCE_URL
+              value: {{ include "gateway.woocommerceUrl" . | quote }}
+            - name: SEED_WOOCOMMERCE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.seedWoocommerce.tokenSecret }}
+                  key: token
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Migrations + seeding run before the server listens.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          # Ready = can reach Postgres. Never depends on upstreams: a dead MCP
+          # server must not take the gateway out of the Service.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.selector" (list . "gateway") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.global.ingress.className | default "traefik" }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName | default (printf "%s-tls" $name) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # /mcp for MCP clients, /api for the dashboard (Phase 4) and admin
+          # tooling, /healthz for external uptime checks.
+          {{- range list "/mcp" "/api" "/healthz" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http
+          {{- end }}
