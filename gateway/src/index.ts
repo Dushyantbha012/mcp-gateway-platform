@@ -1,3 +1,4 @@
+import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createSecretBox } from "./crypto/secretBox.js";
@@ -7,6 +8,13 @@ import { seed } from "./seed.js";
 import { HealthChecker } from "./upstreams/health.js";
 import { UpstreamRegistry } from "./upstreams/registry.js";
 import { ToolRouter } from "./upstreams/router.js";
+
+// Node tries each resolved address (IPv6 and IPv4, "happy eyeballs") for only
+// 250ms by default before moving on. A remote upstream with a ~400ms TCP
+// handshake then fails with ETIMEDOUT even though it's reachable - seen with
+// DeepWiki from k3d. A per-attempt budget of 1s still falls back quickly when
+// an address family has no route at all.
+setDefaultAutoSelectFamilyAttemptTimeout(1_000);
 
 const config = loadConfig();
 const db = createDb(config.databaseUrl);

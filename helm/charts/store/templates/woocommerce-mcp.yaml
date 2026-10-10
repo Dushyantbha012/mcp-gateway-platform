@@ -83,6 +83,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # SIGTERM and removal from the Service's endpoints happen at the same
+          # time, and Traefik / kube-proxy learn about the removal a moment
+          # later. Keep serving for a few seconds first, so requests already
+          # routed here don't get refused or hang mid-rollout.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           # Neither probe touches WooCommerce: if the store is down the MCP
           # server should stay up and return clear tool errors, not restart.
           readinessProbe:

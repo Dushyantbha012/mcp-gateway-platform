@@ -32,7 +32,9 @@ export class HealthChecker {
   /** Checks one server now and records the outcome. Never throws for upstream failures. */
   async check(server: McpServer): Promise<McpServer> {
     try {
-      const tools = await this.registry.get(server).listTools(this.opts.listTimeoutMs);
+      // The server's own timeout, but never longer than the list budget.
+      const timeoutMs = Math.min(server.timeout_ms, this.opts.listTimeoutMs);
+      const tools = await this.registry.get(server).listTools(timeoutMs);
       await recordServerHealth(this.db, server.id, { status: "connected", tools });
     } catch (err) {
       const error =
