@@ -203,6 +203,63 @@ describe("Chat page", () => {
     expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
   });
 
+  it("renders the answer as markdown", async () => {
+    server.use(
+      http.post("/api/chat", () =>
+        streamOf([
+          { type: "text", text: "Found **2 orders**:\n\n- #34 processing\n- #24 processing" },
+          { type: "done", steps: 1 },
+        ]),
+      ),
+    );
+    const { user, box } = await openChat();
+    await user.type(box, "orders");
+    await user.keyboard("{Enter}");
+    expect((await screen.findByText("2 orders")).tagName).toBe("STRONG");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("starts from suggestions: one sends at once, the create prompt fills the box", async () => {
+    const bodies: { messages: ChatMessage[] }[] = [];
+    server.use(
+      http.post("/api/chat", async ({ request }) => {
+        bodies.push((await request.json()) as { messages: ChatMessage[] });
+        return streamOf([
+          { type: "text", text: "ok" },
+          { type: "done", steps: 1 },
+        ]);
+      }),
+    );
+    const { user, box } = await openChat();
+    await user.click(screen.getByRole("button", { name: /create a product named/i }));
+    expect(box).toHaveValue('Create a product named "" priced ');
+    expect(bodies).toHaveLength(0);
+    await user.clear(box);
+    await user.click(screen.getByRole("button", { name: "What orders came in today?" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0].messages).toEqual([{ role: "user", text: "What orders came in today?" }]);
+  });
+
+  it("New chat clears the conversation, and is disabled while a turn streams", async () => {
+    const s = controlledStream();
+    server.use(http.post("/api/chat", () => s.response()));
+    const { user, box } = await openChat();
+    expect(screen.getByRole("button", { name: /new chat/i })).toBeDisabled();
+    await user.type(box, "hello");
+    await user.keyboard("{Enter}");
+    await screen.findByText("Thinking…");
+    expect(screen.getByRole("button", { name: /new chat/i })).toBeDisabled();
+    s.send({ type: "text", text: "Hi there" });
+    s.send({ type: "done", steps: 1 });
+    s.end();
+    await screen.findByText("Hi there");
+    await waitFor(() => expect(screen.getByRole("button", { name: /new chat/i })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    expect(screen.queryByText("Hi there")).not.toBeInTheDocument();
+    expect(screen.getByText("Ask your tools anything")).toBeInTheDocument();
+  });
+
   it("is available to members, in the navigation", async () => {
     await openChat(member);
     expect(screen.getByRole("link", { name: "Chat" })).toBeInTheDocument();

@@ -100,6 +100,27 @@ test.describe("chat agent", () => {
     }
   });
 
+  test("the answer is rendered as markdown, and suggestions start a conversation", async ({
+    page,
+  }) => {
+    const { admin } = await harness();
+    await login(page, admin.email, admin.password);
+    await page.getByRole("link", { name: "Chat" }).click();
+    await expect(page.getByText("Ask your tools anything")).toBeVisible();
+
+    await say(page, "show me some markdown");
+    await expect(page.locator("strong", { hasText: "2 products" })).toBeVisible();
+    await expect(page.getByRole("listitem")).toHaveCount(2);
+    await expect(page.getByRole("table")).toContainText("DEMO-MUG");
+    await expect(page.locator("code", { hasText: "list_products" })).toBeVisible();
+    await expect(page.getByText("**")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "New chat" }).click();
+    await expect(page.getByText("Ask your tools anything")).toBeVisible();
+    await page.getByRole("button", { name: "What orders came in today?" }).click();
+    await expect(page.getByText("Tool said: list_orders:today")).toBeVisible();
+  });
+
   test("Stop ends a turn that never finishes", async ({ page }) => {
     const { admin } = await harness();
     await login(page, admin.email, admin.password);

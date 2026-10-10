@@ -80,6 +80,12 @@ const fakeLlm: LlmClient = {
         req.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
       );
     }
+    if (asked.includes("markdown")) {
+      return {
+        text: "Here are **2 products**:\n\n1. **Mug** - $12.00\n2. **Tee** - $25.00\n\n| SKU | Stock |\n|---|---|\n| DEMO-MUG | 10 |\n\nUse `list_products` for more.",
+        calls: [],
+      };
+    }
     if (asked.includes("orders")) return call("alpha__list_orders", { value: "today" });
     if (asked.includes("missing")) return call("alpha__fail");
     return { text: "Hello from the fake model.", calls: [] };
