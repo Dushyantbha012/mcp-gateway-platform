@@ -23,7 +23,7 @@ test("live: admin sees WooCommerce Connected; killing its MCP pod shows Unreacha
   await page.getByRole("button", { name: "Log in" }).click();
 
   const card = page.getByTestId("server-woocommerce");
-  await expect(card.getByText("Connected")).toBeVisible();
+  await expect(card.getByText("Connected", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: /tools/ }).click();
   for (const tool of [
     "list_products",
@@ -38,10 +38,10 @@ test("live: admin sees WooCommerce Connected; killing its MCP pod shows Unreacha
   try {
     kubectl("scale", `deployment/${MCP_DEPLOYMENT}`, "--replicas=0");
     // Health loop (15s) + dashboard poll (5s), with margin.
-    await expect(card.getByText("Unreachable")).toBeVisible({ timeout: 45_000 });
+    await expect(card.getByText("Unreachable", { exact: true })).toBeVisible({ timeout: 45_000 });
   } finally {
     kubectl("scale", `deployment/${MCP_DEPLOYMENT}`, "--replicas=1");
   }
   kubectl("rollout", "status", `deployment/${MCP_DEPLOYMENT}`, "--timeout=120s");
-  await expect(card.getByText("Connected")).toBeVisible({ timeout: 60_000 });
+  await expect(card.getByText("Connected", { exact: true })).toBeVisible({ timeout: 60_000 });
 });

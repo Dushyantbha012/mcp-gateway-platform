@@ -6,7 +6,7 @@ test.describe("admin manages MCP servers", () => {
     const { admin } = await harness();
     await login(page, admin.email, admin.password);
     const card = page.getByTestId("server-alpha");
-    await expect(card.getByText("Connected")).toBeVisible();
+    await expect(card.getByText("Connected", { exact: true })).toBeVisible();
     await card.getByRole("button", { name: /tools/ }).click();
     await expect(card.getByText("alpha__list_orders")).toBeVisible();
   });
@@ -34,7 +34,7 @@ test.describe("admin manages MCP servers", () => {
     await dialog.getByRole("button", { name: "Add server" }).click();
 
     const card = page.getByTestId(`server-${slug}`);
-    await expect(card.getByText("Connected")).toBeVisible();
+    await expect(card.getByText("Connected", { exact: true })).toBeVisible();
     await expect(card).toContainText("credential stored");
     // The gateway, not the browser, sent the credential upstream.
     expect(await fakeAuthHeaders("beta")).toContain(`Bearer ${credential}`);
@@ -42,18 +42,18 @@ test.describe("admin manages MCP servers", () => {
 
     // Disable: tools disappear for MCP clients on their next list.
     await card.getByRole("switch", { name: "Beta Docs enabled" }).click();
-    await expect(card.getByText("Disabled")).toBeVisible();
+    await expect(card.getByText("Disabled", { exact: true })).toBeVisible();
     expect(await toolNames(admin.apiKey)).not.toContain(`${slug}__search_docs`);
 
     await card.getByRole("switch", { name: "Beta Docs enabled" }).click();
-    await expect(card.getByText("Connected")).toBeVisible();
+    await expect(card.getByText("Connected", { exact: true })).toBeVisible();
     expect(await toolNames(admin.apiKey)).toContain(`${slug}__search_docs`);
 
     // A dead upstream shows as Unreachable with a reason, and its tools are hidden.
     await setFakeBehavior("beta", "http500");
     try {
       await card.getByRole("button", { name: "Check Beta Docs now" }).click();
-      await expect(card.getByText("Unreachable")).toBeVisible();
+      await expect(card.getByText("Unreachable", { exact: true })).toBeVisible();
       await expect(card).toContainText("returned HTTP 500");
       const names = await toolNames(admin.apiKey);
       expect(names).not.toContain(`${slug}__search_docs`);
@@ -62,7 +62,7 @@ test.describe("admin manages MCP servers", () => {
       await setFakeBehavior("beta", "ok");
     }
     // The health loop brings it back by itself.
-    await expect(card.getByText("Connected")).toBeVisible({ timeout: 15_000 });
+    await expect(card.getByText("Connected", { exact: true })).toBeVisible({ timeout: 15_000 });
 
     await card.getByRole("button", { name: "Remove" }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
