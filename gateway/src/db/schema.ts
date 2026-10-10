@@ -7,7 +7,8 @@ type CreatedAt = ColumnType<Date, Date | undefined, never>;
 export type Role = "admin" | "member";
 export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "unknown";
-export type AuditOutcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected";
+export type AuditOutcome =
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
 export type AuditSource = "mcp" | "chat";
 
 export interface UsersTable {
@@ -86,6 +87,18 @@ export interface InvitesTable {
   used_at: Date | null;
 }
 
+export interface ToolPermissionsTable {
+  id: Generated<string>;
+  role: Role | null;
+  user_id: string | null;
+  server_slug: string;
+  /** Upstream's own tool name; null = every tool of the server. */
+  tool_name: string | null;
+  effect: "allow" | "deny";
+  created_by: string | null;
+  created_at: CreatedAt;
+}
+
 export interface Database {
   users: UsersTable;
   api_keys: ApiKeysTable;
@@ -93,6 +106,7 @@ export interface Database {
   audit_log: AuditLogTable;
   sessions: SessionsTable;
   invites: InvitesTable;
+  tool_permissions: ToolPermissionsTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -102,5 +116,6 @@ export type ApiKey = Selectable<ApiKeysTable>;
 export type McpServer = Selectable<McpServersTable>;
 export type NewMcpServer = Insertable<McpServersTable>;
 export type McpServerUpdate = Updateable<McpServersTable>;
+export type ToolPermissionRow = Selectable<ToolPermissionsTable>;
 export type AuditEntry = Selectable<AuditLogTable>;
 export type NewAuditEntry = Insertable<AuditLogTable>;

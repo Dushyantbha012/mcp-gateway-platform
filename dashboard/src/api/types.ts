@@ -8,7 +8,8 @@
 export type Role = "admin" | "member";
 export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "disabled" | "unknown";
-export type AuditOutcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected";
+export type AuditOutcome =
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
 export type AuditSource = "mcp" | "chat";
 
 export interface User {

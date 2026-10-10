@@ -6,6 +6,7 @@ import { principalOf, requireAdmin } from "../auth/middleware.js";
 import type { SecretBox } from "../crypto/secretBox.js";
 import type { Db } from "../db/db.js";
 import type { McpServer, McpServerUpdate } from "../db/schema.js";
+import { deleteRulesForServer, renameServerRules } from "../db/permissions.js";
 import { deleteServer, getServer, insertServer, listServers, updateServer } from "../db/servers.js";
 import { displayStatus, type HealthChecker } from "../upstreams/health.js";
 import { buildToolIndex, SLUG_PATTERN } from "../upstreams/naming.js";
@@ -179,6 +180,7 @@ export function serversApi(deps: {
       conflictOnDuplicate(`A server with slug '${body.slug}'`),
     );
     if (!updated) throw notFound("Server");
+    if (updated.slug !== current.slug) await renameServerRules(db, current.slug, updated.slug);
     let result = updated;
     if (updated.enabled) result = await health.check(updated);
     else await registry.forget(updated.id);
@@ -188,6 +190,8 @@ export function serversApi(deps: {
   api.delete("/:id", requireAdmin, async (req, res) => {
     const server = await load(req.params.id);
     await deleteServer(db, server.id);
+    // A server added later under the same slug must not inherit these rules.
+    await deleteRulesForServer(db, server.slug);
     await registry.forget(server.id);
     res.status(204).end();
   });

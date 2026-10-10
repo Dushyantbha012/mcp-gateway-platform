@@ -79,7 +79,7 @@ export function chatApi(router: ToolRouter, setup: ChatSetup | undefined) {
           llm: setup.llm,
           limits: setup.limits,
           now: setup.now,
-          listTools: () => router.listTools(),
+          listTools: () => router.listTools(principal),
           callTool: (name, args) => router.callTool({ principal, source: "chat" }, name, args),
         },
         gone.signal,

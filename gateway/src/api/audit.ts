@@ -8,7 +8,9 @@ import { parse } from "./errors.js";
 const querySchema = z.object({
   userId: z.uuid().optional(),
   server: z.string().max(64).optional(),
-  outcome: z.enum(["success", "tool_error", "timeout", "unreachable", "rejected"]).optional(),
+  outcome: z
+    .enum(["success", "tool_error", "timeout", "unreachable", "rejected", "denied"])
+    .optional(),
   source: z.enum(["mcp", "chat"]).optional(),
   before: z.string().regex(/^\d+$/).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(50),

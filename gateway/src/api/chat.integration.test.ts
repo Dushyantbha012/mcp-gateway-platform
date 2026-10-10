@@ -1,8 +1,9 @@
 import type { AddressInfo } from "node:net";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { revokeApiKey } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
+import { upsertRule } from "../db/permissions.js";
 import { insertServer, updateServer } from "../db/servers.js";
 import { callTools, FakeLlm, say, type ScriptEntry } from "../chat/fakeLlm.js";
 import type { ChatEvent } from "../chat/types.js";
@@ -133,6 +134,54 @@ describe.skipIf(!hasTestDb)("POST /api/chat", () => {
     expect(names).toEqual(listed.map((tool) => tool.name).sort());
     expect(names).toContain("shop__list_orders");
     expect(names).toContain("docs__search");
+  });
+
+  describe("tool permissions", () => {
+    const denyDocs = (userId: string) =>
+      upsertRule(t.db, {
+        userId,
+        serverSlug: "docs",
+        toolName: null,
+        effect: "deny",
+        createdBy: null,
+      });
+    afterEach(async () => {
+      await t.db.deleteFrom("tool_permissions").execute();
+    });
+
+    it("the model is never shown tools the user may not use; other users still get them", async () => {
+      await denyDocs(bob.user.id);
+      const shownTo = async (key: string) => {
+        script([say("hi")]);
+        await chat(key, ask("x"));
+        return llm.requests[0].tools.map((tool) => tool.name);
+      };
+      const bobSees = await shownTo(bob.key);
+      expect(bobSees).toContain("shop__list_orders");
+      expect(bobSees).not.toContain("docs__search");
+      expect(await shownTo(alice.key)).toContain("docs__search");
+    });
+
+    it("a tool denied mid-conversation is refused, audited as denied, and never runs", async () => {
+      const before = docs.calls.search ?? 0;
+      script([
+        // The rule lands after the model was shown the tool, before it calls it.
+        async () => {
+          await denyDocs(bob.user.id);
+          return callTools({ name: "docs__search" });
+        },
+        say("I wasn't allowed to."),
+      ]);
+      const events = parseSse((await chat(bob.key, ask("x"))).body as string);
+      expect(events.find((e) => e.type === "tool_result")).toMatchObject({ isError: true });
+      expect(docs.calls.search ?? 0).toBe(before);
+      const rows = await audit("bob@example.com");
+      expect(rows.at(-1)).toMatchObject({
+        source: "chat",
+        tool_name: "docs__search",
+        outcome: "denied",
+      });
+    });
   });
 
   it("passes a tool's own error to the model and the browser, audited as tool_error", async () => {

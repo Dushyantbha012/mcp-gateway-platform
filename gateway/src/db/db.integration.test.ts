@@ -35,7 +35,11 @@ describe.skipIf(!hasTestDb)("migrations", () => {
   it("apply cleanly to an empty database and are a no-op the second time", async () => {
     const t = await createTestDatabase({ migrated: false });
     created.push(t);
-    expect(await migrate(t.db)).toEqual(["001_initial", "002_dashboard_auth"]);
+    expect(await migrate(t.db)).toEqual([
+      "001_initial",
+      "002_dashboard_auth",
+      "003_tool_permissions",
+    ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
       select table_name from information_schema.tables
@@ -48,6 +52,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "invites",
       "mcp_servers",
       "sessions",
+      "tool_permissions",
       "users",
     ]);
   });
@@ -58,7 +63,11 @@ describe.skipIf(!hasTestDb)("migrations", () => {
     const replicas = [t.db, createDb(t.url, 2), createDb(t.url, 2)];
     const results = await Promise.all(replicas.map((db) => migrate(db)));
     await Promise.all(replicas.slice(1).map((db) => db.destroy()));
-    expect(results.flat().sort()).toEqual(["001_initial", "002_dashboard_auth"]);
+    expect(results.flat().sort()).toEqual([
+      "001_initial",
+      "002_dashboard_auth",
+      "003_tool_permissions",
+    ]);
   });
 });
 

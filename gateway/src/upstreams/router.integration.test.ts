@@ -77,7 +77,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
   }
 
   it("lists namespaced tools from every connected server, with collisions kept apart", async () => {
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names).toContain("store-a__list_products");
     expect(names).toContain("store-b__list_products");
     expect(names).toContain("store-a__fail");
@@ -122,7 +122,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
 
   it("hides a disabled server's tools and rejects direct calls to them", async () => {
     await updateServer(t.db, ids["store-a"], { enabled: false });
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names.some((n) => n.startsWith("store-a__"))).toBe(false);
     expect(names).toContain("store-b__list_products");
 
@@ -158,7 +158,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
     expect(await lastAudit()).toMatchObject({ outcome: "unreachable", server_slug: "store-a" });
     expect((await getServer(t.db, ids["store-a"]))?.status).toBe("unreachable");
 
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names.some((n) => n.startsWith("store-a__"))).toBe(false);
     expect(names).toContain("store-b__list_products");
   });
