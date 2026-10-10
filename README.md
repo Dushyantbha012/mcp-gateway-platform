@@ -239,7 +239,8 @@ http://dashboard.local.test/chat (every logged-in user). Ask a question; the
 agent picks tools from the same list your MCP client gets
 (`woocommerce__list_orders`, ...), calls them **as you**, and answers from the
 results. Each turn shows a "Tools called" panel (arguments, result, duration)
-while it streams; **Stop** ends a turn.
+while it streams; **Stop** ends a turn and **New chat** starts over. Answers are
+rendered as markdown (raw HTML is never rendered).
 
 To reproduce the demo flow:
 
