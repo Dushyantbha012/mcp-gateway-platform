@@ -7,11 +7,11 @@ import { createHmac, randomBytes } from "node:crypto";
  * Basic auth over HTTPS. Our MCP server talks to WordPress over plain HTTP
  * inside the cluster, where WooCommerce requires an OAuth 1.0a signature.
  *
- * WooCommerce's verifier (WC_REST_Authentication::check_oauth_signature)
- * differs from RFC 5849 in one way that matters: parameter keys and values
- * are percent-encoded once and joined with already-encoded "%3D"/"%26",
- * instead of the RFC's encode-then-encode-the-whole-string. We mirror the
- * WooCommerce version, since that's what has to match.
+ * Mirrors WooCommerce's verifier (WC_REST_Authentication::check_oauth_signature):
+ * keys and values are rawurlencoded, each "key=value" pair is rawurlencoded
+ * again (so a ":" in a value ends up as "%253A" - RFC 5849's double
+ * encoding), pairs are sorted by key and joined with "%26". The base URL is
+ * WooCommerce's own home URL, see WC_SIGNING_URL in config.ts.
  */
 
 /** PHP's rawurlencode: RFC 3986, everything but A-Z a-z 0-9 - _ . ~ encoded. */
@@ -42,7 +42,9 @@ export function signatureBaseString(
 ): string {
   // uksort($params, 'strcmp') - byte-wise sort on the raw keys.
   const keys = Object.keys(params).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const query = keys.map((k) => `${rawUrlEncode(k)}%3D${rawUrlEncode(params[k]!)}`).join("%26");
+  const query = keys
+    .map((k) => rawUrlEncode(`${rawUrlEncode(k)}=${rawUrlEncode(params[k]!)}`))
+    .join("%26");
   return `${method.toUpperCase()}&${rawUrlEncode(signingUrl)}&${query}`;
 }
 

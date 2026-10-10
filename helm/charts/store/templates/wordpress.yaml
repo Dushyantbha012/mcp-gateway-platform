@@ -6,6 +6,10 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $name }}
+  annotations:
+    # Survive `helm uninstall`, like the MySQL StatefulSet's PVC does - losing
+    # only one half of the store (files but not DB) would leave it broken.
+    helm.sh/resource-policy: keep
   labels:
     {{- include "store.labels" . | nindent 4 }}
     {{- include "store.selector" (list . "wordpress") | nindent 4 }}

@@ -63,9 +63,6 @@ wp option update woocommerce_coming_soon no >/dev/null
 wp option update woocommerce_store_pages_only no >/dev/null
 wp option update woocommerce_enable_guest_checkout yes >/dev/null
 wp option update woocommerce_calc_taxes no >/dev/null
-# Skip the onboarding wizard in wp-admin.
-wp option update woocommerce_task_list_hidden yes >/dev/null
-wp option update woocommerce_onboarding_profile '{"skipped":true}' --format=json >/dev/null
 # Cash on delivery: the test-friendly payment method the brief allows.
 wp option update woocommerce_cod_settings \
   '{"enabled":"yes","title":"Cash on delivery","description":"Pay with cash upon delivery.","instructions":"Pay with cash upon delivery.","enable_for_methods":[],"enable_for_virtual":"yes"}' \

@@ -54,19 +54,25 @@ export function registerTools(server: McpServer, wc: WcClient): void {
     {
       title: "List products",
       description:
-        "List products in the WooCommerce store, newest first. Optionally filter by a search term or status.",
+        "List products in the WooCommerce store, newest first. Optionally filter by search words, exact SKU or status.",
       inputSchema: {
-        search: z.string().min(1).optional().describe("Match against product name and SKU"),
+        search: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Words to find in product names and descriptions (does not match SKUs)"),
+        sku: z.string().min(1).optional().describe("Exact SKU match"),
         status: z.enum(["publish", "draft", "pending", "private", "any"]).optional(),
         page,
         per_page: perPage,
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    ({ search, status, page, per_page }) =>
+    ({ search, sku, status, page, per_page }) =>
       run(async () => {
         const products = await wc.get<WcProduct[]>("/products", {
           search,
+          sku,
           status,
           page,
           per_page,

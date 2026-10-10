@@ -14,7 +14,7 @@ describe("rawUrlEncode (PHP rawurlencode semantics)", () => {
 });
 
 describe("signatureBaseString (WooCommerce variant)", () => {
-  it("sorts keys and encodes values once, joined by %3D / %26", () => {
+  it("sorts keys and double-encodes values (a pair is encoded, then encoded again)", () => {
     const base = signatureBaseString("get", "http://store.local.test/wp-json/wc/v3/products", {
       search: "mug & tee",
       per_page: "20",
@@ -22,8 +22,15 @@ describe("signatureBaseString (WooCommerce variant)", () => {
     });
     expect(base).toBe(
       "GET&http%3A%2F%2Fstore.local.test%2Fwp-json%2Fwc%2Fv3%2Fproducts&" +
-        "oauth_nonce%3Dn%26per_page%3D20%26search%3Dmug%20%26%20tee",
+        "oauth_nonce%3Dn%26per_page%3D20%26search%3Dmug%2520%2526%2520tee",
     );
+  });
+
+  it("encodes ISO dates the way WooCommerce does (the live bug this caught)", () => {
+    const base = signatureBaseString("GET", "http://s/wp-json/wc/v3/orders", {
+      after: "2026-10-10T00:00:00",
+    });
+    expect(base.endsWith("after%3D2026-10-10T00%253A00%253A00")).toBe(true);
   });
 });
 
@@ -47,7 +54,7 @@ describe("signRequest", () => {
       oauth_nonce: "abc123",
       oauth_signature_method: "HMAC-SHA256",
       oauth_timestamp: "1700000000",
-      oauth_signature: "ZkelBMOYTUeDR/7iGtwHYXrk9JoThNBRlPPQaXJsv0U=",
+      oauth_signature: "UlwtMMQys4QYDavKuUV+qhrHaAh4mIO+ZHjZcXESWEk=",
     });
   });
 
