@@ -110,3 +110,12 @@ How it talks to the store, and why (REST API + OAuth 1.0a signing): see
 npm test           # unit + MCP protocol tests (no cluster needed)
 ./scripts/verify-phase2.sh   # everything above, plus live tests against the k3d deployment
 ```
+
+## Known limitations
+
+- **No outgoing email.** The WordPress container has no mail server, so
+  WooCommerce's order emails ("New order", "Processing order") fail and
+  leave a note on each order: _"Email ... failed to send: Could not
+  instantiate mail function"_. Orders are unaffected. Real email would need
+  an SMTP service (e.g. an SMTP plugin configured from a Secret), which is
+  out of scope for this assignment.
