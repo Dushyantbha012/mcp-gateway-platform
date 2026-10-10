@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import express from "express";
 import { auditApi } from "./api/audit.js";
+import { chatApi, type ChatSetup } from "./api/chat.js";
 import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
 import { serversApi } from "./api/servers.js";
@@ -21,6 +22,8 @@ export interface AppDeps {
   health: HealthChecker;
   router: ToolRouter;
   config: Pick<Config, "auth" | "trustProxyHops">;
+  /** The chat agent's model and limits; absent = chat switched off (503). */
+  chat?: ChatSetup;
 }
 
 export function createApp(deps: AppDeps) {
@@ -71,10 +74,11 @@ export function createApp(deps: AppDeps) {
   });
   /** Public settings the dashboard shows, so one dashboard image fits every environment. */
   api.get("/meta", (_req, res) => {
-    res.json({ mcpUrl: auth.publicMcpUrl ?? null });
+    res.json({ mcpUrl: auth.publicMcpUrl ?? null, chatEnabled: deps.chat !== undefined });
   });
   api.use("/servers", serversApi(deps));
   api.use("/audit", auditApi(deps.db));
+  api.use("/chat", chatApi(deps.router, deps.chat));
   api.use(usersApi(deps.db, auth));
   api.use(() => {
     throw new HttpError(404, "not_found", "No such endpoint");
