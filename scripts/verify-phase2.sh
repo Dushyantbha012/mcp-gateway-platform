@@ -25,7 +25,13 @@ step() { echo; echo "== $* =="; }
 fail() { echo "FAILED: $*"; exit 1; }
 # Fetch first, then grep: with pipefail, `curl | grep -q` can "fail" on a
 # match, because grep exits early and curl dies of SIGPIPE.
-shop_lists() { local html; html=$(curl -s "http://$STORE_HOST/shop/"); grep -q "$1" <<<"$html"; }
+# How many storefront products are named exactly $1. Searches the public Store
+# API rather than reading /shop/: later phases create test products, which
+# push the demo ones off the first page of the shop.
+product_count() {
+  curl -s "http://$STORE_HOST/wp-json/wc/store/v1/products?search=$(printf '%s' "$1" | sed 's/ /%20/g')" |
+    python3 -c 'import json,sys; print(sum(1 for p in json.load(sys.stdin) if p["name"] == sys.argv[1]))' "$1"
+}
 secret() { kubectl -n "$NS" get secret "$1" -o jsonpath="{.data.$2}" | base64 -d; }
 
 step "Lint, format, unit + protocol tests"
@@ -78,7 +84,7 @@ echo "ok"
 step "Storefront is reachable through Ingress and lists demo products"
 code=$(curl -s -o /dev/null -w "%{http_code}" "http://$STORE_HOST/")
 [ "$code" = "200" ] || fail "storefront returned HTTP $code"
-shop_lists "Urumi Coffee Mug" || fail "demo product not on /shop/"
+[ "$(product_count "Urumi Coffee Mug")" -ge 1 ] || fail "demo product not on the storefront"
 echo "ok"
 
 step "MCP server is NOT reachable from outside the cluster"
@@ -138,19 +144,18 @@ kubectl -n "$NS" delete pod -l "app.kubernetes.io/component in (mysql,wordpress)
 rollout
 # MySQL replays its redo log on restart; give the pair up to 3 minutes.
 for _ in $(seq 1 90); do
-  shop_lists "Urumi Coffee Mug" && break
+  [ "$(product_count "Urumi Coffee Mug")" -ge 1 ] && break
   sleep 2
 done
-shop_lists "Urumi Coffee Mug" || fail "products gone after pod restart"
+[ "$(product_count "Urumi Coffee Mug")" -ge 1 ] || fail "products gone after pod restart"
 echo "ok"
 
 step "Bootstrap is idempotent: a second upgrade re-runs it cleanly"
 helm upgrade "$RELEASE" helm -n "$NS" -f helm/values-local.yaml --wait --timeout 10m >/dev/null
 [ "$(kubectl -n "$NS" get job "$RELEASE-store-bootstrap" -o jsonpath='{.status.succeeded}')" = "1" ] ||
   fail "bootstrap failed on re-run"
-html=$(curl -s "http://$STORE_HOST/shop/")
-count=$(grep -o "Urumi Coffee Mug</a>" <<<"$html" | wc -l | tr -d ' ')
-[ "$count" = "1" ] || fail "expected the demo product once on /shop/, found $count"
+count=$(product_count "Urumi Coffee Mug")
+[ "$count" = "1" ] || fail "expected the demo product once on the storefront, found $count"
 echo "ok"
 
 echo
