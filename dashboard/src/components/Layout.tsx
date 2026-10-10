@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const NAV = [
+  { to: "/chat", label: "Chat" },
   { to: "/servers", label: "Servers" },
   { to: "/tools", label: "Tools" },
   { to: "/keys", label: "API keys" },

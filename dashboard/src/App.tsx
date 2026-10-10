@@ -7,6 +7,7 @@ import { Layout } from "@/components/Layout";
 import { Toaster } from "@/components/ui/sonner";
 import { createQueryClient } from "@/lib/queryClient";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ChatPage } from "@/pages/ChatPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { InvitePage } from "@/pages/InvitePage";
 import { KeysPage } from "@/pages/KeysPage";
@@ -86,6 +87,7 @@ export function AppRoutes() {
         }
       >
         <Route index element={<Navigate to="/servers" replace />} />
+        <Route path="chat" element={<ChatPage />} />
         <Route path="servers" element={<ServersPage />} />
         <Route path="tools" element={<ToolsPage />} />
         <Route path="keys" element={<KeysPage />} />

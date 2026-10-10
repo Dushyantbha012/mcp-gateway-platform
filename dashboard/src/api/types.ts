@@ -109,4 +109,26 @@ export interface AuditFilters {
 
 export interface Meta {
   mcpUrl: string | null;
+  chatEnabled: boolean;
 }
+
+/** One message sent to the chat endpoint; history lives in the browser. */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/** Events the gateway streams for one chat turn. */
+export type ChatEvent =
+  | { type: "tool_call"; id: string; name: string; server: string | null; args: unknown }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      isError: boolean;
+      summary: string;
+      durationMs: number;
+    }
+  | { type: "text"; text: string }
+  | { type: "done"; steps: number }
+  | { type: "error"; code: string; message: string };

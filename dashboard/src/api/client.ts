@@ -21,6 +21,11 @@ export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
 }
 
+/** For callers that don't go through `api()` (the chat stream) to report a 401. */
+export function reportUnauthorized() {
+  onUnauthorized();
+}
+
 /**
  * The one way the dashboard talks to the gateway. Same-origin `/api/...`
  * (the Ingress routes it to the gateway), so the browser attaches the

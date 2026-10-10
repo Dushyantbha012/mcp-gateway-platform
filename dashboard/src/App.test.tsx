@@ -112,7 +112,7 @@ describe("role-based navigation", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Servers", "Tools", "API keys"]);
+    ).toEqual(["Chat", "Servers", "Tools", "API keys"]);
     await waitFor(() => expect(location()).toBe("/servers"));
   });
 
@@ -125,7 +125,7 @@ describe("role-based navigation", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Servers", "Tools", "API keys", "Team", "Audit log"]);
+    ).toEqual(["Chat", "Servers", "Tools", "API keys", "Team", "Audit log"]);
   });
 
   it("logs out from the account menu", async () => {
