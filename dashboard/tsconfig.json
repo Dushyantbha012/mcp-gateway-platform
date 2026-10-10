@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }],
+  // Read by the shadcn CLI to resolve "@/..." (the compiler uses tsconfig.app.json's copy).
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  }
 }
