@@ -85,7 +85,8 @@ describe.skipIf(!enabled)("live: deployed gateway", () => {
 
     const result = (await client.callTool({
       name: "woocommerce__list_products",
-      arguments: {},
+      // Searched for, not assumed to be on page one: later phases create test products.
+      arguments: { search: "Urumi" },
     })) as CallToolResult;
     expect(result.isError).toBeFalsy();
     expect(JSON.stringify(result.content)).toContain("Urumi");
