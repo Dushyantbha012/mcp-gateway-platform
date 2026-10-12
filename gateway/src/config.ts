@@ -24,10 +24,6 @@ const schema = z
   .object({
     PORT: z.coerce.number().int().min(1).max(65535).default(8080),
     DATABASE_URL: z.string().startsWith("postgres"),
-    // 32 random bytes, base64 - from the gateway-encryption-key Secret.
-    ENCRYPTION_KEY: z
-      .string()
-      .refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64-encoded"),
     HEALTH_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     LIST_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
     MAX_RESULT_BYTES: z.coerce.number().int().positive().default(1_000_000),
@@ -43,6 +39,14 @@ const schema = z
     // Hostnames that may resolve to private addresses despite the SSRF guard
     // (exact match). The seeded WooCommerce host is added automatically.
     SSRF_ALLOWED_HOSTS: commaList,
+    // Namespace whose Secrets hold the upstream credentials. Unset = keep them
+    // in memory (tests, running outside Kubernetes); they are lost on restart.
+    UPSTREAM_SECRETS_NAMESPACE: optionalString.pipe(
+      z
+        .string()
+        .regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/)
+        .optional(),
+    ),
     SEED_WOOCOMMERCE_URL: optionalString.pipe(z.url().optional()),
     SEED_WOOCOMMERCE_TOKEN: optionalString,
     // Public URLs, from Helm values. DASHBOARD_URL builds invite links;
@@ -113,12 +117,12 @@ export interface ChatConfig {
 export interface Config {
   port: number;
   databaseUrl: string;
-  encryptionKey: string;
   healthIntervalMs: number;
   listTimeoutMs: number;
   maxResultBytes: number;
   trustProxyHops: number;
   ssrfAllowedHosts: string[];
+  upstreamSecretsNamespace?: string;
   auth: AuthConfig;
   /** Undefined when no GEMINI_API_KEY is set: chat is switched off. */
   chat?: ChatConfig;
@@ -139,12 +143,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
-    encryptionKey: e.ENCRYPTION_KEY,
     healthIntervalMs: e.HEALTH_INTERVAL_MS,
     listTimeoutMs: e.LIST_TIMEOUT_MS,
     maxResultBytes: e.MAX_RESULT_BYTES,
     trustProxyHops: e.TRUST_PROXY_HOPS,
     ssrfAllowedHosts: e.SSRF_ALLOWED_HOSTS,
+    upstreamSecretsNamespace: e.UPSTREAM_SECRETS_NAMESPACE,
     auth: {
       dashboardUrl: e.DASHBOARD_URL?.replace(/\/+$/, ""),
       publicMcpUrl: e.PUBLIC_MCP_URL,

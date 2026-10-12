@@ -1,5 +1,11 @@
 # Overrides for the production-like VPS (k3s). Real domain, TLS and storage
 # class are filled in during Phase 9 — placeholders for now.
+global:
+  networkPolicy:
+    # The k3s node's IP where the API server listens (kubectl get endpoints
+    # kubernetes). CHANGE_ME: this is a documentation-range placeholder.
+    apiServerCidr: 203.0.113.10/32
+
 store:
   ingress:
     host: store.CHANGE_ME.example

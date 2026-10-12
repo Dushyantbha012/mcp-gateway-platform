@@ -147,7 +147,7 @@ print(f"ok ({len(rows)} woocommerce rows; outcomes seen: {sorted(outcomes)})")
 
 step "No secret values in the Helm release or the gateway's API"
 manifest=$(helm get manifest "$RELEASE" -n "$NS")
-for value in "$WC_TOKEN" "$ADMIN_KEY" "$(secret gateway-db password)" "$(secret gateway-encryption-key key)"; do
+for value in "$WC_TOKEN" "$ADMIN_KEY" "$(secret gateway-db password)"; do
   grep -qF "$value" <<<"$manifest" && fail "a secret value appears in the Helm release"
 done
 api /servers | grep -qF "$WC_TOKEN" && fail "WooCommerce token returned by /api/servers"

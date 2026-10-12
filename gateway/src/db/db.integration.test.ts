@@ -39,6 +39,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "001_initial",
       "002_dashboard_auth",
       "003_tool_permissions",
+      "004_credential_flag",
+      "005_drop_credential_ciphertext",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -67,6 +69,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "001_initial",
       "002_dashboard_auth",
       "003_tool_permissions",
+      "004_credential_flag",
+      "005_drop_credential_ciphertext",
     ]);
   });
 });
@@ -102,7 +106,7 @@ describe.skipIf(!hasTestDb)("schema constraints and repositories", () => {
       insertServer(t.db, {
         ...server("noheader"),
         auth_type: "header",
-        credential_ciphertext: Buffer.from("x"),
+        has_credential: true,
       }),
     ).rejects.toThrow(/check constraint/);
   });

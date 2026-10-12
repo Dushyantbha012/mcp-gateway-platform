@@ -43,7 +43,8 @@ export interface McpServersTable {
   enabled: Generated<boolean>;
   auth_type: Generated<AuthType>;
   auth_header_name: string | null;
-  credential_ciphertext: Buffer | null;
+  /** Whether the credential store (a Kubernetes Secret) holds a value for this server. */
+  has_credential: Generated<boolean>;
   timeout_ms: Generated<number>;
   status: Generated<ServerStatus>;
   last_error: string | null;

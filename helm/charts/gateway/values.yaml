@@ -7,11 +7,16 @@
 # stored upstream credentials. These are the Secret names.
 secrets:
   db: gateway-db # keys: password
-  encryptionKey: gateway-encryption-key # keys: key (32 random bytes, base64)
   bootstrapAdmin: gateway-bootstrap-admin # keys: email, api-key, password (optional Secret)
   # Gemini API key for the chat agent (optional Secret: without it chat is
   # switched off and the rest of the gateway is unaffected).
   gemini: gateway-gemini # keys: api-key
+
+# Upstream servers' credentials (GitHub token, ...) are stored as Kubernetes
+# Secrets, one per server, in this namespace. Created ahead of time by
+# scripts/create-secrets.sh (it also labels it for restricted Pod Security).
+upstreamSecrets:
+  namespace: urumi-upstreams
 
 storageClassName: "" # empty = cluster default
 

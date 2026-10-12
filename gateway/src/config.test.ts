@@ -1,11 +1,9 @@
-import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import { generateApiKey } from "./crypto/apiKeys.js";
 
 const base = {
   DATABASE_URL: "postgres://u:p@localhost:5432/db",
-  ENCRYPTION_KEY: randomBytes(32).toString("base64"),
 };
 
 describe("loadConfig", () => {
@@ -39,10 +37,10 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({
         DATABASE_URL: "mysql://nope",
-        ENCRYPTION_KEY: "short",
+        BOOTSTRAP_ADMIN_PASSWORD: "short",
         BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
       }),
-    ).toThrow(/DATABASE_URL[\s\S]*ENCRYPTION_KEY[\s\S]*BOOTSTRAP_ADMIN_API_KEY/);
+    ).toThrow(/DATABASE_URL[\s\S]*BOOTSTRAP_ADMIN_PASSWORD[\s\S]*BOOTSTRAP_ADMIN_API_KEY/);
   });
 
   it("rejects a bootstrap key that isn't a gateway key", () => {

@@ -9,7 +9,7 @@ import { serversApi } from "./api/servers.js";
 import { usersApi } from "./api/users.js";
 import { principalOf, requireAuth } from "./auth/middleware.js";
 import type { Config } from "./config.js";
-import type { SecretBox } from "./crypto/secretBox.js";
+import type { CredentialStore } from "./credentials/store.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
 import type { SsrfPolicy } from "./security/ssrf.js";
@@ -19,7 +19,7 @@ import type { ToolRouter } from "./upstreams/router.js";
 
 export interface AppDeps {
   db: Db;
-  box: SecretBox;
+  credentials: CredentialStore;
   registry: UpstreamRegistry;
   health: HealthChecker;
   router: ToolRouter;

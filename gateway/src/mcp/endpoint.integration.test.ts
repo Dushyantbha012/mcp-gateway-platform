@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -10,7 +10,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
-import { createSecretBox } from "../crypto/secretBox.js";
+import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey, revokeApiKey } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
 import { insertServer } from "../db/servers.js";
@@ -29,7 +29,7 @@ import { PERMISSIVE_POLICY } from "../security/ssrf.js";
  * healthy upstream, one that hangs, and one that's down.
  */
 describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const credentials = new MemoryCredentialStore();
   let t: TestDatabase;
   let registry: UpstreamRegistry;
   let http: Server;
@@ -48,24 +48,26 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     // Short timeouts only where the test needs them to fire (the hanging
     // upstream). The healthy one gets a generous budget so a loaded CI
     // machine can't turn it into a false "unreachable".
-    const add = (slug: string, url: string, credential?: string, timeoutMs = 500) => {
+    const add = async (slug: string, url: string, credential?: string, timeoutMs = 500) => {
       const id = randomUUID();
+      if (credential) await credentials.put(id, credential);
       return insertServer(t.db, {
         id,
         slug,
         name: slug,
         url,
         timeout_ms: timeoutMs,
-        ...(credential
-          ? { auth_type: "bearer" as const, credential_ciphertext: box.encrypt(credential, id) }
-          : {}),
+        ...(credential ? { auth_type: "bearer" as const, has_credential: true } : {}),
       });
     };
     await add("woocommerce", healthy.url, "upstream-token", 10_000);
     await add("hanging", hanging.url);
     await add("dead", await deadUrl());
 
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
+    registry = new UpstreamRegistry(credentials, {
+      maxResultBytes: 100_000,
+      ssrf: PERMISSIVE_POLICY,
+    });
     // Each server's check is capped by min(its timeout, listTimeoutMs).
     const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 5_000 });
     await health.checkAll(); // hanging + dead -> unreachable; then make "hanging" look healthy
@@ -88,7 +90,7 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     const router = new ToolRouter(t.db, registry);
     http = createApp({
       db: t.db,
-      box,
+      credentials,
       registry,
       health,
       router,

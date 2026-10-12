@@ -18,6 +18,14 @@ rand() { openssl rand -hex "$1"; }
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
+# Upstream servers' credentials live in Secrets of their own, in their own
+# namespace, so the gateway's ServiceAccount (the only one with API access) can
+# be limited to exactly these and nothing else (see helm/charts/gateway/templates/rbac.yaml).
+UPSTREAM_NAMESPACE="${UPSTREAM_NAMESPACE:-urumi-upstreams}"
+kubectl get namespace "$UPSTREAM_NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$UPSTREAM_NAMESPACE"
+kubectl label namespace "$UPSTREAM_NAMESPACE" --overwrite \
+  pod-security.kubernetes.io/enforce=restricted >/dev/null
+
 # Pod Security Admission: the API server itself refuses any pod in this
 # namespace that is not non-root, without privilege escalation, with all
 # capabilities dropped and a seccomp profile ("restricted" profile). A mistake
@@ -57,11 +65,6 @@ create woocommerce-mcp-auth \
 # --- Gateway ---
 create gateway-db \
   --from-literal=password="$(rand 24)"
-
-# AES-256-GCM key for upstream credentials stored in the gateway's Postgres.
-# Losing it means re-entering every upstream credential.
-create gateway-encryption-key \
-  --from-literal=key="$(openssl rand -base64 32)"
 
 # Bootstrap admin: seeded on the gateway's first start. Same format as keys
 # the gateway issues: mgw_<8 hex>_<32 random bytes, base64url>.

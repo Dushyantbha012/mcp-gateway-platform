@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -7,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
-import { createSecretBox } from "../crypto/secretBox.js";
+import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
 import { deleteRule, upsertRule } from "../db/permissions.js";
@@ -30,7 +29,7 @@ const text = (r: CallToolResult) => (r.content[0] as { text: string }).text;
  * two members talk to the gateway over HTTP, in front of two fake upstreams.
  */
 describe.skipIf(!hasTestDb)("tool permissions", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const credentials = new MemoryCredentialStore();
   let t: TestDatabase;
   let registry: UpstreamRegistry;
   let http: Server;
@@ -51,7 +50,10 @@ describe.skipIf(!hasTestDb)("tool permissions", () => {
     ] as const) {
       await insertServer(t.db, { slug, name: slug, url: f.url, timeout_ms: 5_000 });
     }
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
+    registry = new UpstreamRegistry(credentials, {
+      maxResultBytes: 100_000,
+      ssrf: PERMISSIVE_POLICY,
+    });
     const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 5_000 });
     await health.checkAll();
 
@@ -68,7 +70,7 @@ describe.skipIf(!hasTestDb)("tool permissions", () => {
     }
     http = createApp({
       db: t.db,
-      box,
+      credentials,
       registry,
       health,
       router: new ToolRouter(t.db, registry),

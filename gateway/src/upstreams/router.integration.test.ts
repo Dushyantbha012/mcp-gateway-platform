@@ -1,8 +1,8 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { generateApiKey } from "../crypto/apiKeys.js";
-import { createSecretBox } from "../crypto/secretBox.js";
+import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey, type Principal } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
 import { getServer, insertServer, updateServer } from "../db/servers.js";
@@ -17,7 +17,7 @@ import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 const text = (r: CallToolResult) => (r.content[0] as { text: string }).text;
 
 describe.skipIf(!hasTestDb)("ToolRouter", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const credentials = new MemoryCredentialStore();
   let t: TestDatabase;
   let registry: UpstreamRegistry;
   let health: HealthChecker;
@@ -43,7 +43,10 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
   });
 
   beforeEach(async () => {
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
+    registry = new UpstreamRegistry(credentials, {
+      maxResultBytes: 100_000,
+      ssrf: PERMISSIVE_POLICY,
+    });
     health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
     router = new ToolRouter(t.db, registry);
     // Two WooCommerce-shaped servers exposing the same tool name.

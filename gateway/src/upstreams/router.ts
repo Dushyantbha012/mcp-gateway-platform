@@ -112,7 +112,7 @@ export class ToolRouter {
     }
 
     try {
-      const result = await this.registry.get(server).callTool(route.upstreamName, args);
+      const result = await (await this.registry.get(server)).callTool(route.upstreamName, args);
       if (result.isError) {
         const text = result.content?.find((c) => c.type === "text");
         return finish(

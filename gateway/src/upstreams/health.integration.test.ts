@@ -1,6 +1,6 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createSecretBox } from "../crypto/secretBox.js";
+import { MemoryCredentialStore } from "../credentials/store.js";
 import { getServer, insertServer, updateServer } from "../db/servers.js";
 import { deadUrl, startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
@@ -9,7 +9,7 @@ import { UpstreamRegistry } from "./registry.js";
 import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 describe.skipIf(!hasTestDb)("health checks + registry", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const credentials = new MemoryCredentialStore();
   let t: TestDatabase;
   let registry: UpstreamRegistry;
   let health: HealthChecker;
@@ -29,7 +29,10 @@ describe.skipIf(!hasTestDb)("health checks + registry", () => {
   });
 
   function setup(intervalMs = 60_000) {
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
+    registry = new UpstreamRegistry(credentials, {
+      maxResultBytes: 100_000,
+      ssrf: PERMISSIVE_POLICY,
+    });
     health = new HealthChecker(t.db, registry, { intervalMs, listTimeoutMs: 300 });
   }
 
@@ -39,17 +42,16 @@ describe.skipIf(!hasTestDb)("health checks + registry", () => {
     return f;
   }
 
-  function addServer(slug: string, url: string, credential?: string) {
+  async function addServer(slug: string, url: string, credential?: string) {
     const id = randomUUID();
+    if (credential) await credentials.put(id, credential);
     return insertServer(t.db, {
       id,
       slug,
       name: slug,
       url,
       timeout_ms: 300,
-      ...(credential
-        ? { auth_type: "bearer" as const, credential_ciphertext: box.encrypt(credential, id) }
-        : {}),
+      ...(credential ? { auth_type: "bearer" as const, has_credential: true } : {}),
     });
   }
 
@@ -104,14 +106,13 @@ describe.skipIf(!hasTestDb)("health checks + registry", () => {
     const first = await fake();
     const second = await fake();
     const s = await addServer("moving", first.url, "old");
-    const connA = registry.get(s);
-    expect(registry.get(s)).toBe(connA);
+    const connA = await registry.get(s);
+    expect(await registry.get(s)).toBe(connA);
 
-    const edited = await updateServer(t.db, s.id, {
-      url: second.url,
-      credential_ciphertext: box.encrypt("new", s.id),
-    });
-    const connB = registry.get(edited!);
+    await credentials.put(s.id, "new");
+    registry.invalidate(s.id); // what the admin API does after an edit
+    const edited = await updateServer(t.db, s.id, { url: second.url });
+    const connB = await registry.get(edited!);
     expect(connB).not.toBe(connA);
     await connB.listTools();
     expect(second.requests.every((h) => h.authorization === "Bearer new")).toBe(true);

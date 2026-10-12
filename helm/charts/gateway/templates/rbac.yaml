@@ -1,0 +1,44 @@
+{{- $name := include "gateway.fullname" . -}}
+{{- $ns := .Values.upstreamSecrets.namespace -}}
+# The gateway keeps each upstream server's credential in a Kubernetes Secret
+# in a namespace of its own ({{ $ns }}). It is the only workload with a
+# ServiceAccount token, and the Role below is the whole of its Kubernetes API
+# access: five verbs on Secrets, in that one namespace. It cannot read the
+# database password, the session secrets or any Secret in this release's
+# namespace - RBAC can't scope "create" to a name prefix, which is why the
+# credentials live apart from everything else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+automountServiceAccountToken: false # mounted into the gateway pod only, by its spec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-upstream-secrets
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-upstream-secrets
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-upstream-secrets
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}

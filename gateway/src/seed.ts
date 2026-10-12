@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashApiKey, prefixOf } from "./crypto/apiKeys.js";
 import { hashPassword } from "./crypto/passwords.js";
-import type { SecretBox } from "./crypto/secretBox.js";
+import type { CredentialStore } from "./credentials/store.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/db.js";
 import { getServerBySlug, insertServer } from "./db/servers.js";
@@ -13,9 +13,9 @@ import { log } from "./logger.js";
  * never undoes an admin's changes: a disabled or edited WooCommerce server
  * stays that way, and a revoked bootstrap key stays revoked.
  */
-export async function seed(db: Db, box: SecretBox, config: Config): Promise<void> {
+export async function seed(db: Db, credentials: CredentialStore, config: Config): Promise<void> {
   if (config.bootstrapAdmin) await seedAdmin(db, config.bootstrapAdmin);
-  if (config.seedWoocommerce) await seedWoocommerce(db, box, config.seedWoocommerce);
+  if (config.seedWoocommerce) await seedWoocommerce(db, credentials, config.seedWoocommerce);
 }
 
 async function seedAdmin(db: Db, admin: { email: string; apiKey: string; password?: string }) {
@@ -53,19 +53,25 @@ async function seedAdmin(db: Db, admin: { email: string; apiKey: string; passwor
   }
 }
 
-async function seedWoocommerce(db: Db, box: SecretBox, wc: { url: string; token: string }) {
+async function seedWoocommerce(
+  db: Db,
+  credentials: CredentialStore,
+  wc: { url: string; token: string },
+) {
   if (await getServerBySlug(db, "woocommerce")) return;
   const id = randomUUID();
+  await credentials.put(id, wc.token);
   await insertServer(db, {
     id,
     slug: "woocommerce",
     name: "WooCommerce",
     url: wc.url,
     auth_type: "bearer",
-    credential_ciphertext: box.encrypt(wc.token, id),
+    has_credential: true,
   })
     // Another replica seeded it at the same moment: fine.
-    .catch((err: { code?: string }) => {
+    .catch(async (err: { code?: string }) => {
+      await credentials.delete(id).catch(() => undefined);
       if (err.code !== "23505") throw err;
     });
   log("info", "seeded upstream server", { slug: "woocommerce" });

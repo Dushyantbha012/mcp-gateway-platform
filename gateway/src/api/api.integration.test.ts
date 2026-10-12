@@ -105,9 +105,15 @@ describe.skipIf(!hasTestDb)("REST API", () => {
       );
       expect(f.requests.every((h) => h.authorization === "Bearer ghp_supersecretvalue")).toBe(true);
 
-      // The credential appears in no response, for anyone - not even encrypted.
+      // The credential is in the credential store (a Kubernetes Secret in
+      // production), flagged in the row, and appears in no response - nor in
+      // the database row itself.
       const stored = await getServerBySlug(t.db, "github");
-      const ciphertext = stored!.credential_ciphertext!.toString("base64");
+      expect(stored!.has_credential).toBe(true);
+      expect(Object.keys(stored!)).not.toContain("credential_ciphertext");
+      expect(JSON.stringify(stored)).not.toContain("ghp_supersecretvalue");
+      expect((await gw.credentials.get(stored!.id))?.value).toBe("ghp_supersecretvalue");
+      const ciphertext = "ghp_supersecretvalue";
       for (const who of [admin, member]) {
         for (const path of ["/api/servers", `/api/servers/${res.body.id}`]) {
           const raw = (await as(who).get(path)).text;

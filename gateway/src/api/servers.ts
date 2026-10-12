@@ -3,7 +3,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
 import { z } from "zod";
 import { principalOf, requireAdmin } from "../auth/middleware.js";
-import type { SecretBox } from "../crypto/secretBox.js";
+import type { CredentialStore } from "../credentials/store.js";
 import type { Db } from "../db/db.js";
 import type { McpServer, McpServerUpdate } from "../db/schema.js";
 import { deleteRulesForServer, renameServerRules } from "../db/permissions.js";
@@ -78,7 +78,7 @@ export function serverView(server: McpServer, opts: { admin: boolean }) {
     lastCheckedAt: server.last_checked_at,
     authType: server.auth_type,
     authHeaderName: server.auth_header_name,
-    hasCredential: server.credential_ciphertext !== null,
+    hasCredential: server.has_credential,
     timeoutMs: server.timeout_ms,
     tools: index.tools.map((t) => ({
       name: t.name,
@@ -110,12 +110,12 @@ function checkAuth(authType: string, headerName: string | null, hasCredential: b
 
 export function serversApi(deps: {
   db: Db;
-  box: SecretBox;
+  credentials: CredentialStore;
   registry: UpstreamRegistry;
   health: HealthChecker;
   ssrf: SsrfPolicy;
 }) {
-  const { db, box, registry, health, ssrf } = deps;
+  const { db, credentials, registry, health, ssrf } = deps;
   const api = express.Router();
 
   const load = async (id: unknown) => {
@@ -153,7 +153,10 @@ export function serversApi(deps: {
     const credential = body.authType === "none" ? null : (body.credential ?? null);
     checkAuth(body.authType, headerName, credential !== null);
     await checkTarget(body.url);
-    const id = randomUUID(); // known up front: it's the credential's associated data
+    const id = randomUUID(); // known up front: it names the credential's Secret
+    // Secret first, row second: a crash in between leaves an unreferenced
+    // Secret (swept later), never a server that claims a credential it lacks.
+    if (credential !== null) await credentials.put(id, credential);
     const created = await insertServer(db, {
       id,
       slug: body.slug,
@@ -162,9 +165,12 @@ export function serversApi(deps: {
       enabled: body.enabled,
       auth_type: body.authType,
       auth_header_name: headerName,
-      credential_ciphertext: credential === null ? null : box.encrypt(credential, id),
+      has_credential: credential !== null,
       timeout_ms: body.timeoutMs,
-    }).catch(conflictOnDuplicate(`A server with slug '${body.slug}'`));
+    }).catch(async (err) => {
+      if (credential !== null) await credentials.delete(id).catch(() => undefined);
+      throw conflictOnDuplicate(`A server with slug '${body.slug}'`)(err);
+    });
     // Check it right away so the response already says Connected/Unreachable.
     const checked = created.enabled ? await health.check(created) : created;
     res.status(201).json(serverView(checked, { admin: true }));
@@ -184,18 +190,25 @@ export function serversApi(deps: {
     };
     changes.auth_header_name =
       authType === "header" ? (body.authHeaderName ?? current.auth_header_name) : null;
-    if (authType === "none") changes.credential_ciphertext = null;
-    else if (body.credential)
-      changes.credential_ciphertext = box.encrypt(body.credential, current.id);
-    const hasCredential =
-      authType !== "none" && (body.credential ? true : current.credential_ciphertext !== null);
+    const hasCredential = authType !== "none" && (body.credential ? true : current.has_credential);
+    changes.has_credential = hasCredential;
     checkAuth(authType, changes.auth_header_name ?? null, hasCredential);
     if (body.url !== undefined) await checkTarget(body.url);
 
-    const updated = await updateServer(db, current.id, changes).catch(
-      conflictOnDuplicate(`A server with slug '${body.slug}'`),
-    );
+    // Write the new credential first, remembering the old one so a failed
+    // row update (slug already taken...) puts it back.
+    const previous = body.credential ? await credentials.get(current.id) : null;
+    if (authType !== "none" && body.credential) await credentials.put(current.id, body.credential);
+    const updated = await updateServer(db, current.id, changes).catch(async (err) => {
+      if (body.credential) {
+        if (previous) await credentials.put(current.id, previous.value).catch(() => undefined);
+        else await credentials.delete(current.id).catch(() => undefined);
+      }
+      throw conflictOnDuplicate(`A server with slug '${body.slug}'`)(err);
+    });
     if (!updated) throw notFound("Server");
+    if (authType === "none" && current.has_credential) await credentials.delete(current.id);
+    registry.invalidate(current.id);
     if (updated.slug !== current.slug) await renameServerRules(db, current.slug, updated.slug);
     let result = updated;
     if (updated.enabled) result = await health.check(updated);
@@ -206,6 +219,8 @@ export function serversApi(deps: {
   api.delete("/:id", requireAdmin, async (req, res) => {
     const server = await load(req.params.id);
     await deleteServer(db, server.id);
+    // The row is gone, so a failure here only leaves an orphan for the sweep.
+    await credentials.delete(server.id).catch(() => undefined);
     // A server added later under the same slug must not inherit these rules.
     await deleteRulesForServer(db, server.slug);
     await registry.forget(server.id);
