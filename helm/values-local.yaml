@@ -5,6 +5,11 @@ store:
   storageClassName: local-path
 
 gateway:
+  gateway:
+    ssrf:
+      # Test fixture only: the live suites register a black-hole upstream here
+      # to prove a hanging server can't slow anything else down.
+      allowedHosts: ["10.255.255.1"]
   ingress:
     host: gateway.local.test
   storageClassName: local-path

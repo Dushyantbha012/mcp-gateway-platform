@@ -18,6 +18,15 @@ rand() { openssl rand -hex "$1"; }
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
+# Pod Security Admission: the API server itself refuses any pod in this
+# namespace that is not non-root, without privilege escalation, with all
+# capabilities dropped and a seccomp profile ("restricted" profile). A mistake
+# in a chart then fails at deploy time instead of shipping a root container.
+kubectl label namespace "$NAMESPACE" --overwrite \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/audit=restricted \
+  pod-security.kubernetes.io/warn=restricted >/dev/null
+
 create() {
   local name="$1"
   shift

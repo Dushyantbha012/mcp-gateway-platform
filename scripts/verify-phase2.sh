@@ -5,6 +5,7 @@
 #   SKIP_DEPLOY=1 ./scripts/verify-phase2.sh   # reuse what's already deployed
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib/probe.sh
 
 NS="${NAMESPACE:-urumi}"
 RELEASE=platform
@@ -104,8 +105,7 @@ INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 # Labelled as an MCP client: since Phase 3 a NetworkPolicy drops traffic
 # from any other pod (verify-phase3.sh checks that side).
-kubectl -n "$NS" run mcp-probe --rm -i --restart=Never --quiet --image=curlimages/curl:8.11.1 \
-  --labels="urumi.ai/mcp-client=true" --env="TOKEN=$TOKEN" --command -- sh -c "
+run_probe mcp-probe "urumi.ai/mcp-client=true" "
     h='-H content-type:application/json -H accept:application/json,text/event-stream'
     # A new pod is admitted by the NetworkPolicy controller within a second or two.
     for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null --max-time 1 '${URL%/mcp}/healthz' && break; sleep 1; done
@@ -118,7 +118,7 @@ kubectl -n "$NS" run mcp-probe --rm -i --restart=Never --quiet --image=curlimage
       echo \"\$tools\" | grep -q \"\\\"\$t\\\"\" || { echo \"missing tool \$t\"; exit 1; }
     done
     echo 'with token: all 5 tools listed'
-  " || fail "in-cluster MCP probe"
+  " "$NS" "TOKEN=$TOKEN" || fail "in-cluster MCP probe"
 
 port_forward() { # service local:remote
   kubectl -n "$NS" port-forward "svc/$1" "$2" >/dev/null 2>&1 &

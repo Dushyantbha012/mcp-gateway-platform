@@ -5,6 +5,7 @@
 #   SKIP_DEPLOY=1 ./scripts/verify-phase3.sh  # reuse what's already deployed
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib/probe.sh
 
 NS="${NAMESPACE:-urumi}"
 RELEASE=platform
@@ -124,13 +125,11 @@ MCP_URL="http://$MCP_DEPLOY:3000/healthz"
 probe='sleep 3
   curl -s -o /dev/null --max-time 3 '"$MCP_URL"' && echo "mcp=open" || echo "mcp=blocked"
   curl -sv --max-time 3 telnet://'"$PG"':5432 </dev/null 2>&1 | grep -q "Connected to" && echo "pg=open" || echo "pg=blocked"'
-out=$(kubectl -n "$NS" run np-unlabelled --rm -i --restart=Never --quiet \
-  --image=curlimages/curl:8.11.1 --command -- sh -c "$probe")
+out=$(run_probe np-unlabelled "" "$probe")
 echo "unlabelled pod: $(tr '\n' ' ' <<<"$out")"
 grep -q "mcp=blocked" <<<"$out" || fail "an unlabelled pod reached the MCP server"
 grep -q "pg=blocked" <<<"$out" || fail "an unlabelled pod reached Postgres"
-out=$(kubectl -n "$NS" run np-labelled --rm -i --restart=Never --quiet \
-  --labels="urumi.ai/mcp-client=true" --image=curlimages/curl:8.11.1 --command -- sh -c "$probe")
+out=$(run_probe np-labelled "urumi.ai/mcp-client=true" "$probe")
 echo "MCP-client pod: $(tr '\n' ' ' <<<"$out")"
 grep -q "mcp=open" <<<"$out" || fail "a labelled MCP client couldn't reach the MCP server"
 grep -q "pg=blocked" <<<"$out" || fail "a non-gateway pod reached Postgres"

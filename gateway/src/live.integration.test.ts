@@ -143,8 +143,9 @@ describe.skipIf(!enabled)("live: deployed gateway", () => {
       return res.body;
     };
     // Nothing behind this name: DNS fails at once.
-    const dead = await add(`dead-${run}`, "http://nothing.urumi.svc.cluster.local/mcp");
-    // Non-routable address: packets vanish, so the connection just hangs.
+    const dead = await add(`dead-${run}`, "http://nothing.example.invalid/mcp");
+    // Non-routable address: packets vanish, so the connection just hangs. It is
+    // private, so values-local.yaml allowlists it for the SSRF guard (test fixture).
     const hanging = await add(`hang-${run}`, "http://10.255.255.1/mcp");
     expect(dead).toMatchObject({ status: "unreachable" });
     expect(dead.lastError).toMatch(/ENOTFOUND/);

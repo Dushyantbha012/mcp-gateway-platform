@@ -52,9 +52,18 @@ spec:
         runAsUser: 33
         runAsGroup: 33
         runAsNonRoot: true
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
       containers:
         - name: wp-cli
           image: {{ .Values.bootstrap.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           command: ["sh", "/bootstrap/bootstrap.sh"]
           env:
             {{- include "store.wordpressEnv" . | nindent 12 }}
@@ -107,7 +116,12 @@ spec:
             - name: scripts
               mountPath: /bootstrap
               readOnly: true
+            # HOME and WP-CLI's cache live here.
+            - name: tmp
+              mountPath: /tmp
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: html
           persistentVolumeClaim:
             claimName: {{ include "store.fullname" . }}-wordpress
