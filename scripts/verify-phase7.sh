@@ -135,7 +135,7 @@ kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" --tail=2000 | grep -qF "$GITH
 { for p in /servers /tools /meta "/audit?limit=500" /users; do curl -s -H "Authorization: Bearer $ADMIN_KEY" "$GW/api$p"; done; } |
   grep -qF "$GITHUB_MCP_TOKEN" && leak="$leak API responses"
 [ -z "$leak" ] || fail "GitHub token found in:$leak"
-echo "ok (it exists only encrypted in the gateway's Postgres)"
+echo "ok (it exists only in a Secret in the urumi-upstreams namespace)"
 
 if [ -z "${SKIP_REGRESSION:-}" ]; then
   step "Regression: Phase 2, 3, 4 and 5 checks against the same deployment"

@@ -103,9 +103,11 @@ TOKEN=$(secret woocommerce-mcp-auth token)
 URL="http://$MCP_SVC.$NS.svc.cluster.local:3000/mcp"
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
 LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-# Labelled as an MCP client: since Phase 3 a NetworkPolicy drops traffic
-# from any other pod (verify-phase3.sh checks that side).
-run_probe mcp-probe "urumi.ai/mcp-client=true" "
+# Carries the gateway's labels: since Phase 3 a NetworkPolicy drops traffic
+# from any other pod, and since Phase 8 only the gateway's identity may open
+# connections to the MCP server (verify-phase3.sh and netpol_matrix.py check
+# the other side).
+run_probe mcp-probe "app.kubernetes.io/instance=platform-gateway,app.kubernetes.io/component=gateway,urumi.ai/mcp-client=true" "
     h='-H content-type:application/json -H accept:application/json,text/event-stream'
     # A new pod is admitted by the NetworkPolicy controller within a second or two.
     for i in 1 2 3 4 5 6 7 8 9 10; do curl -sf -o /dev/null --max-time 1 '${URL%/mcp}/healthz' && break; sleep 1; done

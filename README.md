@@ -98,6 +98,8 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase4.sh   # dashboard: login, invites, keys, audit, live browser test
    ./scripts/verify-phase5.sh   # chat agent (needs the Gemini key)
    ./scripts/verify-phase6.sh   # three upstreams + the full definition of done (needs the GitHub token too)
+   ./scripts/verify-phase7.sh   # tool permissions (re-runs Phase 6 and 2-5)
+   ./scripts/verify-phase8.sh   # security hardening (re-runs everything above under default-deny networking)
    ```
 
    Each accepts `SKIP_DEPLOY=1` to check the running deployment without
@@ -227,8 +229,8 @@ are added the way an admin would, through the gateway's API (the dashboard's
    ./scripts/register-upstreams.sh --rotate-github  # replace GitHub's token later
    ```
 
-The token is sent to the gateway once, stored AES-256-GCM-encrypted in its
-Postgres, and added to GitHub calls server-side; no response, log or Helm
+The token is sent to the gateway once, stored as a Kubernetes Secret in the
+`urumi-upstreams` namespace (see "Security hardening"), and added to GitHub calls server-side; no response, log or Helm
 value ever contains it (`verify-phase6.sh` greps for it). Tools appear as
 `github__*` and `deepwiki__*` next to `woocommerce__*`.
 
@@ -277,7 +279,7 @@ Ingress sends `/api` to the gateway.
    Change it from the account menu (top right) after the first login.
 
 2. **Servers**: WooCommerce shows **Connected** with its 5 tools. Add a
-   server (credentials are stored encrypted and never shown again — leave
+   server (credentials are stored as a Kubernetes Secret and never shown again — leave
    the field blank on edit to keep the current one), toggle it off/on,
    "Check" it now, or remove it. Status refreshes every 5s; a dead server shows
    **Unreachable** with the reason within one health interval (15s).
@@ -348,6 +350,39 @@ a turn is one request. Check your key's limits at
 https://aistudio.google.com/rate-limit and change `gateway.chat.model` if you
 want a stronger model.
 
+## Security hardening
+
+Four controls, each tested on its own and re-checked by `./scripts/verify-phase8.sh`:
+
+- **SSRF guard on "add server".** The gateway makes the requests to upstream
+  URLs from inside the cluster, so a URL like `http://169.254.169.254/`,
+  `http://localhost:5432` or `http://platform-gateway-postgres:5432` must never
+  work. Upstream URLs must resolve to public addresses (all of them; IPv4,
+  IPv6, mapped and encoded forms included), checked when you save and again on
+  every connection with the address actually connected to, so DNS rebinding
+  and redirects don't get around it. The in-cluster WooCommerce MCP server is
+  allowed because its host is allowlisted in Helm (`gateway.ssrf.allowedHosts`
+  adds more; nothing in the dashboard or API can). Code: `gateway/src/security/ssrf.ts`.
+- **Credentials are Kubernetes Secrets.** Each upstream's token is one Secret
+  in the `urumi-upstreams` namespace; Postgres only records that a credential
+  exists. The gateway's ServiceAccount may manage Secrets in that namespace and
+  nothing else (it can't read `gateway-db`, can't list pods), and it is the
+  only pod with a ServiceAccount token. Inspect it with
+  `kubectl -n urumi-upstreams get secrets` and
+  `kubectl auth can-i get secrets -n urumi --as=system:serviceaccount:urumi:platform-gateway`.
+- **Deny-by-default networking.** `helm/templates/networkpolicies.yaml` denies
+  all ingress and egress, then allows only the flows in the diagram at the top
+  of that file. The gateway can reach the public internet (Gemini, GitHub,
+  DeepWiki) but not private ranges, the node or cloud metadata. Prove it:
+  `python3 scripts/netpol_matrix.py` prints a 9x10 table of what each workload
+  can reach. On a new cluster set `global.networkPolicy.apiServerCidr` to the
+  node IP where the API server listens (`kubectl get endpoints kubernetes`).
+- **Restricted pods.** Every container is non-root with a read-only root
+  filesystem, no capabilities, a seccomp profile and no ServiceAccount token (the
+  gateway aside). The namespace enforces the Pod Security `restricted`
+  profile, so a bare `kubectl run` there is refused. `python3 scripts/audit-pods.py`
+  checks the running pods; CI checks the rendered chart.
+
 ## Tests
 
 ```bash
@@ -413,4 +448,13 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   memory), like the login limiter, and the Gemini free tier has a daily cap.
 - **Login rate limiting is per gateway pod** (in memory). With more
   replicas an attacker gets that many times the attempts; a shared store
-  is a Phase 8 item.
+  (or a rate limit at the ingress) would fix it and is not done.
+- **Prompt injection is not solved.** A malicious public upstream can put
+  instructions in its tool descriptions or results, and the chat agent may
+  follow them. Damage is limited to what the user could already do (their
+  permissions, the audit log, GitHub's read-only token), not prevented.
+- **The SSRF guard resolves names with the cluster resolver.** A resolver that
+  lies is out of scope; the egress NetworkPolicy (no private ranges) is the
+  second wall behind the code check.
+- **Credentials rotate on other replicas within about 5 seconds** (a short
+  cache avoids a Kubernetes API call per tool call).

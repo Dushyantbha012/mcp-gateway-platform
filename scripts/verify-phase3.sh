@@ -17,7 +17,7 @@ MCP_DEPLOY="$RELEASE-store-woocommerce-mcp"
 TEST_DB=postgres://gateway_test:gateway_test@localhost:5433/gateway_test
 
 cleanup() {
-  kubectl -n "$NS" delete pod np-unlabelled np-labelled --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete pod np-unlabelled np-client-only np-gateway --ignore-not-found --wait=false >/dev/null 2>&1 || true
   # Never leave the store's MCP server scaled down if a check fails midway.
   kubectl -n "$NS" scale "deployment/$MCP_DEPLOY" --replicas=1 >/dev/null 2>&1 || true
 }
@@ -129,10 +129,17 @@ out=$(run_probe np-unlabelled "" "$probe")
 echo "unlabelled pod: $(tr '\n' ' ' <<<"$out")"
 grep -q "mcp=blocked" <<<"$out" || fail "an unlabelled pod reached the MCP server"
 grep -q "pg=blocked" <<<"$out" || fail "an unlabelled pod reached Postgres"
-out=$(run_probe np-labelled "urumi.ai/mcp-client=true" "$probe")
-echo "MCP-client pod: $(tr '\n' ' ' <<<"$out")"
-grep -q "mcp=open" <<<"$out" || fail "a labelled MCP client couldn't reach the MCP server"
-grep -q "pg=blocked" <<<"$out" || fail "a non-gateway pod reached Postgres"
+# Carrying only the MCP-client label is not enough any more: with default-deny
+# egress (Phase 8) a pod may open connections only if a policy selects it as
+# the gateway (scripts/netpol_matrix.py checks every flow).
+out=$(run_probe np-client-only "urumi.ai/mcp-client=true" "$probe")
+echo "MCP-client label alone: $(tr '\n' ' ' <<<"$out")"
+grep -q "mcp=blocked" <<<"$out" || fail "a pod with just the client label reached the MCP server"
+grep -q "pg=blocked" <<<"$out" || fail "a pod with just the client label reached Postgres"
+out=$(run_probe np-gateway "app.kubernetes.io/instance=platform-gateway,app.kubernetes.io/component=gateway,urumi.ai/mcp-client=true" "$probe")
+echo "gateway identity: $(tr '\n' ' ' <<<"$out")"
+grep -q "mcp=open" <<<"$out" || fail "the gateway's identity couldn't reach the MCP server"
+grep -q "pg=open" <<<"$out" || fail "the gateway's identity couldn't reach Postgres"
 echo "gateway pod: Ready (needs Postgres) and woocommerce connected (needs the MCP server)"
 
 step "Audit log recorded the calls above, attributed to the caller"

@@ -144,13 +144,16 @@ describe.skipIf(!enabled)("live: deployed gateway", () => {
     };
     // Nothing behind this name: DNS fails at once.
     const dead = await add(`dead-${run}`, "http://nothing.example.invalid/mcp");
-    // Non-routable address: packets vanish, so the connection just hangs. It is
-    // private, so values-local.yaml allowlists it for the SSRF guard (test fixture).
+    // Non-routable address: before Phase 8 packets vanished and the connection
+    // hung. It is private, so values-local.yaml allowlists it for the SSRF guard
+    // (test fixture), and the egress NetworkPolicy now refuses it at once - so
+    // this is "unreachable" either way. The hang itself is covered by the
+    // fake-upstream tests; what matters live is that nothing else is slowed.
     const hanging = await add(`hang-${run}`, "http://10.255.255.1/mcp");
     expect(dead).toMatchObject({ status: "unreachable" });
     expect(dead.lastError).toMatch(/ENOTFOUND/);
     expect(hanging).toMatchObject({ status: "unreachable" });
-    expect(hanging.lastError).toMatch(/timed out/);
+    expect(hanging.lastError).toMatch(/timed out|unreachable/);
 
     const client = await connect(env.adminKey!);
     const startedAt = Date.now();
