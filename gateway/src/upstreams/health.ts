@@ -34,7 +34,7 @@ export class HealthChecker {
     try {
       // The server's own timeout, but never longer than the list budget.
       const timeoutMs = Math.min(server.timeout_ms, this.opts.listTimeoutMs);
-      const tools = await this.registry.get(server).listTools(timeoutMs);
+      const tools = await (await this.registry.get(server)).listTools(timeoutMs);
       await recordServerHealth(this.db, server.id, { status: "connected", tools });
     } catch (err) {
       const error =

@@ -31,7 +31,7 @@ const env = {
 };
 const enabled = Object.entries(env).every(([, v]) => Boolean(v));
 
-type Outcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected";
+type Outcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
 type Source = "mcp" | "chat";
 interface Expected {
   tool: string;
@@ -331,6 +331,44 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
       },
     );
     expect(events.at(-1)?.type).toBe("done");
+  });
+
+  it("Tool permissions: a tool denied to members disappears for them and is refused if called, admins keep it", async () => {
+    const hidden = "woocommerce__update_order_status";
+    const rule = await api("/permissions", {
+      method: "PUT",
+      body: JSON.stringify({
+        role: "member",
+        serverSlug: "woocommerce",
+        toolName: "update_order_status",
+        effect: "deny",
+      }),
+    });
+    expect(rule.status).toBe(200);
+    try {
+      // User B's external client: hidden from tools/list, the rest of the server intact.
+      const client = await connect(b.key);
+      const names = await toolNames(client);
+      expect(names).not.toContain(hidden);
+      expect(names).toContain("woocommerce__list_orders");
+
+      // A client still holding the old list is refused, and it is audited as denied.
+      const refused = await call(b, client, hidden, { id: orderId, status: "completed" }, "denied");
+      expect(textOf(refused)).toContain("don't have permission");
+
+      // The chat agent is given exactly the same view, as user A.
+      const chatView = (await api("/tools", { key: a.key })).body as { name: string }[];
+      expect(chatView.map((t) => t.name)).not.toContain(hidden);
+      expect(chatView.map((t) => t.name)).toContain("woocommerce__list_orders");
+
+      // Admins are not restricted.
+      const adminView = (await api("/tools")).body as { name: string }[];
+      expect(adminView.map((t) => t.name)).toContain(hidden);
+    } finally {
+      await api(`/permissions/${rule.body.id}`, { method: "DELETE" });
+    }
+    // Removing the rule brings the tool back on the very next list.
+    expect(await toolNames(await connect(b.key))).toContain(hidden);
   });
 
   it("Revoke user B's key: the next call is rejected", async () => {

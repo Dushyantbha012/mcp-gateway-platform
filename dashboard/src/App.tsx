@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { createQueryClient } from "@/lib/queryClient";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPage } from "@/pages/ChatPage";
+import { PermissionsPage } from "@/pages/PermissionsPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { InvitePage } from "@/pages/InvitePage";
 import { KeysPage } from "@/pages/KeysPage";
@@ -96,6 +97,14 @@ export function AppRoutes() {
           element={
             <AdminOnly>
               <TeamPage />
+            </AdminOnly>
+          }
+        />
+        <Route
+          path="permissions"
+          element={
+            <AdminOnly>
+              <PermissionsPage />
             </AdminOnly>
           }
         />

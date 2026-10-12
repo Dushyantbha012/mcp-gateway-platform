@@ -11,6 +11,21 @@ test.describe("admin manages MCP servers", () => {
     await expect(card.getByText("alpha__list_orders")).toBeVisible();
   });
 
+  test("refuses a server URL that points at an internal address (SSRF guard)", async ({ page }) => {
+    const { admin } = await harness();
+    await login(page, admin.email, admin.password);
+    await page.getByRole("button", { name: "Add server" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Name").fill("Metadata");
+    await dialog.getByLabel("Slug").fill(`meta-${unique()}`);
+    await dialog.getByLabel("URL").fill("http://169.254.169.254/latest/meta-data/");
+    await dialog.getByRole("button", { name: "Add server" }).click();
+    await expect(dialog).toContainText("not allowed");
+    await expect(dialog).toContainText("link-local");
+    // Still open, nothing was added.
+    await expect(dialog).toBeVisible();
+  });
+
   test("add (with a credential) -> disable -> enable -> unreachable -> remove, reflected at once for MCP clients", async ({
     page,
   }) => {

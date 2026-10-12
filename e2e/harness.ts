@@ -14,12 +14,13 @@ import express from "express";
 import { createApp } from "../gateway/src/app.js";
 import type { LlmClient, LlmReply, LlmRequest } from "../gateway/src/chat/types.js";
 import { generateApiKey } from "../gateway/src/crypto/apiKeys.js";
-import { createSecretBox } from "../gateway/src/crypto/secretBox.js";
+import { MemoryCredentialStore } from "../gateway/src/credentials/store.js";
 import { insertServer } from "../gateway/src/db/servers.js";
 import { seed } from "../gateway/src/seed.js";
 import { startFakeUpstream, type Behavior } from "../gateway/src/test/fakeUpstream.js";
 import { createTestDatabase, hasTestDb } from "../gateway/src/test/testDb.js";
 import { HealthChecker } from "../gateway/src/upstreams/health.js";
+import { policyFrom } from "../gateway/src/security/ssrf.js";
 import { UpstreamRegistry } from "../gateway/src/upstreams/registry.js";
 import { ToolRouter } from "../gateway/src/upstreams/router.js";
 import { CONTROL_PORT, DASHBOARD_ORIGIN, GATEWAY_PORT } from "./ports.js";
@@ -36,8 +37,8 @@ const admin = {
 };
 
 const t = await createTestDatabase();
-const box = createSecretBox(Buffer.alloc(32, 7).toString("base64"));
-await seed(t.db, box, { bootstrapAdmin: admin } as Parameters<typeof seed>[2]);
+const credentials = new MemoryCredentialStore();
+await seed(t.db, credentials, { bootstrapAdmin: admin } as Parameters<typeof seed>[2]);
 
 // "alpha" is pre-registered (like WooCommerce in the real deployment);
 // "beta" is for the tests to add through the UI, with a credential.
@@ -52,7 +53,12 @@ await insertServer(t.db, {
   timeout_ms: 2_000,
 });
 
-const registry = new UpstreamRegistry(box, { maxResultBytes: 1_000_000 });
+// Real SSRF policy; only the fakes' own address (127.0.0.1) is allowlisted.
+const ssrf = policyFrom(["127.0.0.1"]);
+const registry = new UpstreamRegistry(credentials, {
+  maxResultBytes: 1_000_000,
+  ssrf,
+});
 // Fast health loop so status changes show up within a test's patience.
 const health = new HealthChecker(t.db, registry, { intervalMs: 1_000, listTimeoutMs: 1_500 });
 const router = new ToolRouter(t.db, registry);
@@ -94,7 +100,8 @@ const fakeLlm: LlmClient = {
 
 const app = createApp({
   db: t.db,
-  box,
+  credentials,
+  ssrf,
   registry,
   health,
   router,

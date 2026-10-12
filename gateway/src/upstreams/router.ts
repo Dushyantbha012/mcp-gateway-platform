@@ -3,7 +3,9 @@ import { writeAudit } from "../audit/writer.js";
 import type { Principal } from "../db/apiKeys.js";
 import type { Db } from "../db/db.js";
 import type { AuditOutcome, AuditSource, McpServer } from "../db/schema.js";
+import { rulesFor } from "../db/permissions.js";
 import { listServers, recordServerHealth } from "../db/servers.js";
+import { isAllowed } from "../permissions/evaluate.js";
 import { UpstreamError } from "./connection.js";
 import { buildToolIndex, slugOf, type ToolIndex } from "./naming.js";
 import type { UpstreamRegistry } from "./registry.js";
@@ -37,11 +39,22 @@ export class ToolRouter {
 
   /**
    * Tools of every enabled server whose last health check succeeded, from
-   * the health checker's cache: listing never waits on an upstream.
+   * the health checker's cache: listing never waits on an upstream. Tools the
+   * caller isn't permitted to use are left out, so they can't see (or have the
+   * chat model see) what they can't call.
    */
-  async listTools(): Promise<Tool[]> {
+  async listTools(principal: Principal): Promise<Tool[]> {
     const servers = await listServers(this.db);
-    return indexOf(servers.filter((s) => s.enabled && s.status === "connected")).tools;
+    const index = indexOf(servers.filter((s) => s.enabled && s.status === "connected"));
+    if (principal.role === "admin") return index.tools;
+    const rules = await rulesFor(this.db, principal);
+    return index.tools.filter((t) => {
+      const route = index.routes.get(t.name);
+      return (
+        route !== undefined &&
+        isAllowed(principal, { serverSlug: route.slug, toolName: route.upstreamName }, rules)
+      );
+    });
   }
 
   async callTool(
@@ -86,8 +99,20 @@ export class ToolRouter {
       return finish("rejected", errorResult(message), known?.slug ?? null, message);
     }
 
+    // Checked before anything reaches the upstream, with rules read now: a
+    // client holding an old tools/list can't use a tool that was just denied.
+    if (ctx.principal.role !== "admin") {
+      const rules = await rulesFor(this.db, ctx.principal);
+      if (
+        !isAllowed(ctx.principal, { serverSlug: route.slug, toolName: route.upstreamName }, rules)
+      ) {
+        const message = `You don't have permission to use '${name}'`;
+        return finish("denied", errorResult(message), server.slug, message);
+      }
+    }
+
     try {
-      const result = await this.registry.get(server).callTool(route.upstreamName, args);
+      const result = await (await this.registry.get(server)).callTool(route.upstreamName, args);
       if (result.isError) {
         const text = result.content?.find((c) => c.type === "text");
         return finish(

@@ -22,6 +22,27 @@ spec:
     requests:
       storage: {{ .Values.wordpress.storage }}
 ---
+# Apache listens on 8080 so the container can run as a non-root user (ports
+# below 1024 need root). The Service still exposes 80. Both files replace the
+# image's copies, changing only the port.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-apache
+  labels:
+    {{- include "store.labels" . | nindent 4 }}
+    {{- include "store.selector" (list . "wordpress") | nindent 4 }}
+data:
+  ports.conf: |
+    Listen 8080
+  000-default.conf: |
+    <VirtualHost *:8080>
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/html
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+    </VirtualHost>
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,12 +81,27 @@ spec:
         {{- include "store.labels" . | nindent 8 }}
         {{- include "store.selector" (list . "wordpress") | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        # uid 33 = www-data in the Debian-based image, which already owns the
+        # files on the volume (the bootstrap Job runs as 33 too).
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: wordpress
           image: {{ .Values.wordpress.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 8080
           env:
             {{- include "store.wordpressEnv" . | nindent 12 }}
           # First start copies WordPress core onto the volume: give it time.
@@ -95,10 +131,35 @@ spec:
           volumeMounts:
             - name: html
               mountPath: /var/www/html
+            - name: apache-conf
+              mountPath: /etc/apache2/ports.conf
+              subPath: ports.conf
+              readOnly: true
+            - name: apache-conf
+              mountPath: /etc/apache2/sites-enabled/000-default.conf
+              subPath: 000-default.conf
+              readOnly: true
+            # Apache's pid file, lock files and PHP's temp files: the rest of
+            # the filesystem is read-only.
+            - name: run
+              mountPath: /var/run/apache2
+            - name: lock
+              mountPath: /var/lock/apache2
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: html
           persistentVolumeClaim:
             claimName: {{ $name }}
+        - name: apache-conf
+          configMap:
+            name: {{ $name }}-apache
+        - name: run
+          emptyDir: {}
+        - name: lock
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

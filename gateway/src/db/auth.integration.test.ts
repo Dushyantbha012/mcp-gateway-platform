@@ -137,7 +137,7 @@ describe.skipIf(!hasTestDb)("sessions, invites and user changes", () => {
 
     it("are not valid once expired or for a disabled user", async () => {
       const a = await user();
-      const expired = await createInvite(t.db, { userId: a.id, createdBy: null, ttlMs: -1 });
+      const expired = await createInvite(t.db, { userId: a.id, createdBy: null, ttlMs: -60_000 });
       expect(await findValidInvite(t.db, hashToken(expired.token))).toBeUndefined();
 
       const b = await user();

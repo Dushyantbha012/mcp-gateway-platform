@@ -1,0 +1,270 @@
+{{- /*
+Deny by default, then allow exactly the flows the platform needs. One file on
+purpose: this is the whole network design, readable top to bottom.
+
+  Traefik ──► dashboard                       (static files; nothing outbound)
+  Traefik ──► gateway ──► Postgres
+                      ├─► WooCommerce MCP ──► WordPress ──► MySQL
+                      ├─► Kubernetes API   (manages upstream Secrets)
+                      └─► public internet  (Gemini, GitHub, DeepWiki; private
+                                            ranges excluded)
+  Traefik ──► WordPress
+  bootstrap Job ──► MySQL, public internet (downloads WooCommerce)
+
+NetworkPolicies only ever add allowances, and a pod that no policy selects is
+wide open - hence the default-deny at the top, which selects every pod. Ports
+below are container ports: policies are evaluated after Service DNAT.
+*/ -}}
+{{- $np := .Values.global.networkPolicy -}}
+{{- if $np.enabled }}
+{{- $ns := .Release.Namespace -}}
+{{- $gw := printf "%s-gateway" .Release.Name -}}
+{{- $store := printf "%s-store" .Release.Name -}}
+{{- $dash := printf "%s-dashboard" .Release.Name -}}
+# Every pod in the namespace: no ingress, no egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# Every pod may ask cluster DNS to resolve names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- if .Values.dashboard.enabled }}
+---
+# Dashboard (static nginx): reachable only through the ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dashboard
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $dash }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressController.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.ingressController.podLabels | nindent 14 }}
+      ports:
+        - port: 8080
+{{- end }}
+{{- if .Values.gateway.enabled }}
+---
+# Gateway: callers come in via the ingress controller; it goes out to its
+# database, the store's MCP server, the Kubernetes API and the public internet
+# - never to other private addresses (cloud metadata, other pods' IPs,
+# the node), which is what stops a compromised or tricked gateway pivoting.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $gw }}
+      app.kubernetes.io/component: gateway
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressController.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.ingressController.podLabels | nindent 14 }}
+      ports:
+        - port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $gw }}
+              app.kubernetes.io/component: postgres
+      ports:
+        - port: 5432
+{{- if .Values.store.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: woocommerce-mcp
+      ports:
+        - port: 3000
+{{- end }}
+{{- range $np.extraGatewayEgress }}
+    - {{- toYaml . | nindent 6 }}
+{{- end }}
+{{- with $np.apiServerCidr }}
+    # The Kubernetes API (upstream credentials are Secrets in their own namespace).
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - port: {{ $np.apiServerPort }}
+{{- end }}
+{{- if $np.internetEgress }}
+    # Upstream MCP servers and the LLM API are public HTTPS endpoints.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml $np.privateRanges | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+{{- end }}
+{{- end }}
+{{- if .Values.store.enabled }}
+---
+# WooCommerce MCP server: only the gateway may call it (the pre-existing
+# policy in the store chart); it may call only WordPress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: woocommerce-mcp-egress
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $store }}
+      app.kubernetes.io/component: woocommerce-mcp
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: wordpress
+      ports:
+        - port: 8080
+---
+# WordPress: the storefront (via the ingress controller) and the MCP server's
+# REST calls come in; only MySQL goes out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wordpress
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $store }}
+      app.kubernetes.io/component: wordpress
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressController.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.ingressController.podLabels | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: woocommerce-mcp
+      ports:
+        - port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: mysql
+      ports:
+        - port: 3306
+---
+# MySQL: WordPress and the bootstrap Job; nothing else, and nothing outbound.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mysql
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $store }}
+      app.kubernetes.io/component: mysql
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: wordpress
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: bootstrap
+      ports:
+        - port: 3306
+---
+# Bootstrap Job (install WordPress + WooCommerce): MySQL, and the public
+# internet to download the WooCommerce plugin.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bootstrap
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $store }}
+      app.kubernetes.io/component: bootstrap
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: mysql
+      ports:
+        - port: 3306
+{{- if $np.internetEgress }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml $np.privateRanges | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+{{- end }}
+{{- end }}
+{{- end }}

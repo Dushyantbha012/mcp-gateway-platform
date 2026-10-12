@@ -4,23 +4,27 @@ import { auditApi } from "./api/audit.js";
 import { chatApi, type ChatSetup } from "./api/chat.js";
 import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
+import { permissionsApi } from "./api/permissions.js";
 import { serversApi } from "./api/servers.js";
 import { usersApi } from "./api/users.js";
-import { requireAuth } from "./auth/middleware.js";
+import { principalOf, requireAuth } from "./auth/middleware.js";
 import type { Config } from "./config.js";
-import type { SecretBox } from "./crypto/secretBox.js";
+import type { CredentialStore } from "./credentials/store.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
+import type { SsrfPolicy } from "./security/ssrf.js";
 import type { HealthChecker } from "./upstreams/health.js";
 import type { UpstreamRegistry } from "./upstreams/registry.js";
 import type { ToolRouter } from "./upstreams/router.js";
 
 export interface AppDeps {
   db: Db;
-  box: SecretBox;
+  credentials: CredentialStore;
   registry: UpstreamRegistry;
   health: HealthChecker;
   router: ToolRouter;
+  /** Which upstream URLs may be registered (SSRF guard). */
+  ssrf: SsrfPolicy;
   config: Pick<Config, "auth" | "trustProxyHops">;
   /** The chat agent's model and limits; absent = chat switched off (503). */
   chat?: ChatSetup;
@@ -70,13 +74,14 @@ export function createApp(deps: AppDeps) {
   );
   /** Exactly what this caller's MCP client gets from tools/list right now. */
   api.get("/tools", async (_req, res) => {
-    res.json(await deps.router.listTools());
+    res.json(await deps.router.listTools(principalOf(res)));
   });
   /** Public settings the dashboard shows, so one dashboard image fits every environment. */
   api.get("/meta", (_req, res) => {
     res.json({ mcpUrl: auth.publicMcpUrl ?? null, chatEnabled: deps.chat !== undefined });
   });
   api.use("/servers", serversApi(deps));
+  api.use("/permissions", permissionsApi(deps.db));
   api.use("/audit", auditApi(deps.db));
   api.use("/chat", chatApi(deps.router, deps.chat));
   api.use(usersApi(deps.db, auth));

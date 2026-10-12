@@ -107,6 +107,20 @@ jobs:
           helm template platform helm -f helm/values-local.yaml > /dev/null
           helm template platform helm -f helm/values-prod.yaml > /dev/null
 
+      # Every pod template in the chart must be non-root, drop all capabilities,
+      # use a seccomp profile and a read-only root filesystem (reviewed
+      # exceptions live in scripts/audit-pods.py). No cluster needed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Audit rendered pod security settings
+        run: |
+          for env in local prod; do
+            helm template platform helm -f helm/values-$env.yaml \
+              | node scripts/manifests-to-pods.mjs | python3 scripts/audit-pods.py --stdin
+          done
+
   docker:
     runs-on: ubuntu-latest
     steps:

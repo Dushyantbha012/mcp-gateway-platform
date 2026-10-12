@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Config } from "./config.js";
 import { generateApiKey, hashApiKey } from "./crypto/apiKeys.js";
-import { createSecretBox } from "./crypto/secretBox.js";
+import { MemoryCredentialStore } from "./credentials/store.js";
 import { findPrincipalByKeyHash, revokeApiKey } from "./db/apiKeys.js";
 import { getServerBySlug, listServers, updateServer } from "./db/servers.js";
 import { verifyPassword } from "./crypto/passwords.js";
@@ -11,7 +10,7 @@ import { seed } from "./seed.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "./test/testDb.js";
 
 describe.skipIf(!hasTestDb)("startup seeding", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const box = new MemoryCredentialStore();
   const adminKey = generateApiKey().key;
   const config = {
     bootstrapAdmin: {
@@ -37,7 +36,8 @@ describe.skipIf(!hasTestDb)("startup seeding", () => {
 
     const woo = await getServerBySlug(t.db, "woocommerce");
     expect(woo).toMatchObject({ name: "WooCommerce", auth_type: "bearer", enabled: true });
-    expect(box.decrypt(woo!.credential_ciphertext!, woo!.id)).toBe("wc-token");
+    expect(woo!.has_credential).toBe(true);
+    expect((await box.get(woo!.id))?.value).toBe("wc-token");
   });
 
   it("is idempotent, also when replicas seed concurrently", async () => {

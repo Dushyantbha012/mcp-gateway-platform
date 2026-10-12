@@ -1,11 +1,14 @@
 import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { createSecretBox } from "./crypto/secretBox.js";
+import { K8sSecretStore } from "./credentials/k8s.js";
+import { sweepOrphanedCredentials } from "./credentials/sweep.js";
+import { MemoryCredentialStore } from "./credentials/store.js";
 import { createDb, migrate, waitForDatabase } from "./db/db.js";
 import { log } from "./logger.js";
 import { GeminiClient } from "./chat/gemini.js";
 import { seed } from "./seed.js";
+import { policyFrom } from "./security/ssrf.js";
 import { HealthChecker } from "./upstreams/health.js";
 import { UpstreamRegistry } from "./upstreams/registry.js";
 import { ToolRouter } from "./upstreams/router.js";
@@ -19,7 +22,6 @@ setDefaultAutoSelectFamilyAttemptTimeout(1_000);
 
 const config = loadConfig();
 const db = createDb(config.databaseUrl);
-const box = createSecretBox(config.encryptionKey);
 
 await waitForDatabase(db, {
   attempts: 50, // 100s: inside the startup probe's 120s budget
@@ -28,9 +30,24 @@ await waitForDatabase(db, {
 });
 const applied = await migrate(db);
 if (applied.length) log("info", "applied migrations", { migrations: applied });
-await seed(db, box, config);
+const credentials = config.upstreamSecretsNamespace
+  ? await K8sSecretStore.inCluster(config.upstreamSecretsNamespace)
+  : new MemoryCredentialStore();
+if (!config.upstreamSecretsNamespace) {
+  log("warn", "UPSTREAM_SECRETS_NAMESPACE not set: upstream credentials are kept in memory only");
+}
+await seed(db, credentials, config);
+await sweepOrphanedCredentials(db, credentials).catch((error) =>
+  log("warn", "orphaned credential sweep failed", { error: String(error) }),
+);
 
-const registry = new UpstreamRegistry(box, { maxResultBytes: config.maxResultBytes });
+// Private hostnames that are allowed on purpose: the allowlist from Helm, plus
+// the seeded in-cluster WooCommerce MCP server.
+const ssrf = policyFrom([
+  ...config.ssrfAllowedHosts,
+  ...(config.seedWoocommerce ? [new URL(config.seedWoocommerce.url).hostname] : []),
+]);
+const registry = new UpstreamRegistry(credentials, { maxResultBytes: config.maxResultBytes, ssrf });
 const health = new HealthChecker(db, registry, {
   intervalMs: config.healthIntervalMs,
   listTimeoutMs: config.listTimeoutMs,
@@ -51,7 +68,7 @@ log("info", chat ? "chat agent enabled" : "chat agent disabled (no GEMINI_API_KE
   model: config.chat?.model,
 });
 
-const app = createApp({ db, box, registry, health, router, config, chat });
+const app = createApp({ db, credentials, registry, health, router, ssrf, config, chat });
 const server = app.listen(config.port, "0.0.0.0", () => {
   log("info", "gateway listening", { port: config.port });
 });

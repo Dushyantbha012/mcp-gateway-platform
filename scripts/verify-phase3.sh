@@ -5,6 +5,7 @@
 #   SKIP_DEPLOY=1 ./scripts/verify-phase3.sh  # reuse what's already deployed
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib/probe.sh
 
 NS="${NAMESPACE:-urumi}"
 RELEASE=platform
@@ -16,7 +17,7 @@ MCP_DEPLOY="$RELEASE-store-woocommerce-mcp"
 TEST_DB=postgres://gateway_test:gateway_test@localhost:5433/gateway_test
 
 cleanup() {
-  kubectl -n "$NS" delete pod np-unlabelled np-labelled --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete pod np-unlabelled np-client-only np-gateway --ignore-not-found --wait=false >/dev/null 2>&1 || true
   # Never leave the store's MCP server scaled down if a check fails midway.
   kubectl -n "$NS" scale "deployment/$MCP_DEPLOY" --replicas=1 >/dev/null 2>&1 || true
 }
@@ -124,16 +125,21 @@ MCP_URL="http://$MCP_DEPLOY:3000/healthz"
 probe='sleep 3
   curl -s -o /dev/null --max-time 3 '"$MCP_URL"' && echo "mcp=open" || echo "mcp=blocked"
   curl -sv --max-time 3 telnet://'"$PG"':5432 </dev/null 2>&1 | grep -q "Connected to" && echo "pg=open" || echo "pg=blocked"'
-out=$(kubectl -n "$NS" run np-unlabelled --rm -i --restart=Never --quiet \
-  --image=curlimages/curl:8.11.1 --command -- sh -c "$probe")
+out=$(run_probe np-unlabelled "" "$probe")
 echo "unlabelled pod: $(tr '\n' ' ' <<<"$out")"
 grep -q "mcp=blocked" <<<"$out" || fail "an unlabelled pod reached the MCP server"
 grep -q "pg=blocked" <<<"$out" || fail "an unlabelled pod reached Postgres"
-out=$(kubectl -n "$NS" run np-labelled --rm -i --restart=Never --quiet \
-  --labels="urumi.ai/mcp-client=true" --image=curlimages/curl:8.11.1 --command -- sh -c "$probe")
-echo "MCP-client pod: $(tr '\n' ' ' <<<"$out")"
-grep -q "mcp=open" <<<"$out" || fail "a labelled MCP client couldn't reach the MCP server"
-grep -q "pg=blocked" <<<"$out" || fail "a non-gateway pod reached Postgres"
+# Carrying only the MCP-client label is not enough any more: with default-deny
+# egress (Phase 8) a pod may open connections only if a policy selects it as
+# the gateway (scripts/netpol_matrix.py checks every flow).
+out=$(run_probe np-client-only "urumi.ai/mcp-client=true" "$probe")
+echo "MCP-client label alone: $(tr '\n' ' ' <<<"$out")"
+grep -q "mcp=blocked" <<<"$out" || fail "a pod with just the client label reached the MCP server"
+grep -q "pg=blocked" <<<"$out" || fail "a pod with just the client label reached Postgres"
+out=$(run_probe np-gateway "app.kubernetes.io/instance=platform-gateway,app.kubernetes.io/component=gateway,urumi.ai/mcp-client=true" "$probe")
+echo "gateway identity: $(tr '\n' ' ' <<<"$out")"
+grep -q "mcp=open" <<<"$out" || fail "the gateway's identity couldn't reach the MCP server"
+grep -q "pg=open" <<<"$out" || fail "the gateway's identity couldn't reach Postgres"
 echo "gateway pod: Ready (needs Postgres) and woocommerce connected (needs the MCP server)"
 
 step "Audit log recorded the calls above, attributed to the caller"
@@ -148,7 +154,7 @@ print(f"ok ({len(rows)} woocommerce rows; outcomes seen: {sorted(outcomes)})")
 
 step "No secret values in the Helm release or the gateway's API"
 manifest=$(helm get manifest "$RELEASE" -n "$NS")
-for value in "$WC_TOKEN" "$ADMIN_KEY" "$(secret gateway-db password)" "$(secret gateway-encryption-key key)"; do
+for value in "$WC_TOKEN" "$ADMIN_KEY" "$(secret gateway-db password)"; do
   grep -qF "$value" <<<"$manifest" && fail "a secret value appears in the Helm release"
 done
 api /servers | grep -qF "$WC_TOKEN" && fail "WooCommerce token returned by /api/servers"

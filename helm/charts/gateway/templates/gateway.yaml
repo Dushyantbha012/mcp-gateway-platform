@@ -35,8 +35,10 @@ spec:
         # Lets this pod through the woocommerce-mcp NetworkPolicy.
         {{ .Values.global.mcpClientLabel }}: "true"
     spec:
-      # Doesn't talk to the Kubernetes API (until Phase 8 manages Secrets).
-      automountServiceAccountToken: false
+      # The only pod with a ServiceAccount token: it reads and writes upstream
+      # credentials as Secrets in {{ .Values.upstreamSecrets.namespace }} (see rbac.yaml).
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000 # the "node" user in node:alpine
@@ -63,13 +65,12 @@ spec:
             # hex, so it needs no URL escaping.
             - name: DATABASE_URL
               value: {{ printf "postgres://%s:$(DB_PASSWORD)@%s-postgres:5432/%s" .Values.postgres.user $name .Values.postgres.database | quote }}
-            - name: ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.encryptionKey }}
-                  key: key
             - name: HEALTH_INTERVAL_MS
               value: {{ .Values.gateway.healthIntervalMs | quote }}
+            - name: UPSTREAM_SECRETS_NAMESPACE
+              value: {{ .Values.upstreamSecrets.namespace | quote }}
+            - name: SSRF_ALLOWED_HOSTS
+              value: {{ join "," .Values.gateway.ssrf.allowedHosts | quote }}
             - name: LIST_TIMEOUT_MS
               value: {{ .Values.gateway.listTimeoutMs | quote }}
             - name: BOOTSTRAP_ADMIN_EMAIL

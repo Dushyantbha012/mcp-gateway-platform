@@ -18,4 +18,5 @@ export const OUTCOME: Record<AuditOutcome, { label: string; className: string }>
   timeout: { label: "Timeout", className: "bg-red-100 text-red-800" },
   unreachable: { label: "Unreachable", className: "bg-red-100 text-red-800" },
   rejected: { label: "Rejected", className: "bg-zinc-200 text-zinc-700" },
+  denied: { label: "Denied", className: "bg-orange-100 text-orange-800" },
 };

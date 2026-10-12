@@ -9,6 +9,7 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createGuardedFetch, SsrfError, type SsrfPolicy } from "../security/ssrf.js";
 
 export interface UpstreamConfig {
   id: string;
@@ -68,6 +69,13 @@ export function describeError(err: unknown, slug: string, timeoutMs: number): Up
         : `Upstream '${slug}' returned an error: ${err.message.slice(0, 200)}`,
     );
   }
+  const blockedByPolicy = findSsrfError(err);
+  if (blockedByPolicy) {
+    return new UpstreamError(
+      "unreachable",
+      `Upstream '${slug}' blocked by SSRF policy: ${blockedByPolicy.message}`,
+    );
+  }
   // fetch hides the network reason in `cause` (sometimes an AggregateError,
   // when several addresses were tried): ECONNREFUSED, ENOTFOUND, "bad port"...
   type Cause = { code?: string; message?: string; errors?: { code?: string }[] };
@@ -80,6 +88,15 @@ export function describeError(err: unknown, slug: string, timeoutMs: number): Up
   return new UpstreamError("unreachable", `Upstream '${slug}' failed: ${message.slice(0, 200)}`);
 }
 
+/** The SsrfError behind a failed fetch (undici wraps connect errors in `cause`). */
+function findSsrfError(err: unknown): SsrfError | undefined {
+  for (let e = err, depth = 0; e && depth < 4; depth++) {
+    if (e instanceof SsrfError) return e;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 /**
  * One long-lived MCP client session to one upstream. Lazily connected,
  * reused across calls, and thrown away after any transport failure so the
@@ -88,11 +105,14 @@ export function describeError(err: unknown, slug: string, timeoutMs: number): Up
  */
 export class UpstreamConnection {
   private client?: Promise<Client>;
+  private readonly guardedFetch: typeof fetch;
 
   constructor(
     readonly config: UpstreamConfig,
-    private readonly opts: { maxResultBytes: number },
-  ) {}
+    private readonly opts: { maxResultBytes: number; ssrf: SsrfPolicy },
+  ) {
+    this.guardedFetch = createGuardedFetch(opts.ssrf);
+  }
 
   async listTools(timeoutMs = this.config.timeoutMs): Promise<Tool[]> {
     return this.run(timeoutMs, async (client, remaining) => {
@@ -182,6 +202,9 @@ export class UpstreamConnection {
         // Authorization header never reaches an upstream (no token
         // passthrough), so an upstream can't replay a user's gateway key.
         requestInit: { headers: this.config.headers },
+        // Every request, redirect hop and connection is checked against the
+        // SSRF policy (see security/ssrf.ts).
+        fetch: this.guardedFetch,
       });
       this.client = client
         .connect(transport, { timeout: remaining() })

@@ -8,6 +8,33 @@ global:
   # Label that marks a pod as an MCP client allowed through the MCP servers'
   # NetworkPolicies. Set on gateway pods; shared by both subcharts.
   mcpClientLabel: urumi.ai/mcp-client
+  # Deny-by-default NetworkPolicies (templates/networkpolicies.yaml). Needs a
+  # CNI that enforces them: k3s does (kube-router), so k3d and the VPS both do.
+  networkPolicy:
+    enabled: true
+    # Where the ingress controller runs, and how to recognise its pods.
+    ingressController:
+      namespace: kube-system
+      podLabels:
+        app.kubernetes.io/name: traefik
+    # Where the gateway reaches the Kubernetes API (to manage upstream
+    # Secrets). The node's IP on k3s: set per environment, e.g. "172.18.0.3/32".
+    # Empty = no API egress rule.
+    apiServerCidr: ""
+    apiServerPort: 6443
+    # The gateway and the bootstrap Job may reach the public internet on 80/443
+    # but none of these ranges (pod/service CIDRs, node network, cloud
+    # metadata, carrier-grade NAT).
+    internetEgress: true
+    privateRanges:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+      - 100.64.0.0/10
+    # Extra egress rules for the gateway, as NetworkPolicy `to`/`ports` entries
+    # (e.g. an internal MCP server allowlisted in gateway.ssrf.allowedHosts).
+    extraGatewayEgress: []
 
 # WordPress + WooCommerce + MySQL + the store's WooCommerce MCP server.
 # Every key under here is passed to the store subchart - see

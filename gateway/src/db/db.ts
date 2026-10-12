@@ -3,6 +3,9 @@ import { Migrator, type Migration } from "kysely/migration";
 import pg from "pg";
 import * as m001 from "./migrations/001_initial.js";
 import * as m002 from "./migrations/002_dashboard_auth.js";
+import * as m003 from "./migrations/003_tool_permissions.js";
+import * as m004 from "./migrations/004_credential_flag.js";
+import * as m005 from "./migrations/005_drop_credential_ciphertext.js";
 import type { Database } from "./schema.js";
 
 export type Db = Kysely<Database>;
@@ -12,6 +15,9 @@ export type Db = Kysely<Database>;
 const migrations: Record<string, Migration> = {
   "001_initial": m001,
   "002_dashboard_auth": m002,
+  "003_tool_permissions": m003,
+  "004_credential_flag": m004,
+  "005_drop_credential_ciphertext": m005,
 };
 
 export function createDb(connectionString: string, max = 10): Db {

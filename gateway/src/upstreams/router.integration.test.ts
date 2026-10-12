@@ -1,8 +1,8 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { generateApiKey } from "../crypto/apiKeys.js";
-import { createSecretBox } from "../crypto/secretBox.js";
+import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey, type Principal } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
 import { getServer, insertServer, updateServer } from "../db/servers.js";
@@ -12,11 +12,12 @@ import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb
 import { HealthChecker } from "./health.js";
 import { UpstreamRegistry } from "./registry.js";
 import { ToolRouter, type CallContext } from "./router.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 const text = (r: CallToolResult) => (r.content[0] as { text: string }).text;
 
 describe.skipIf(!hasTestDb)("ToolRouter", () => {
-  const box = createSecretBox(randomBytes(32).toString("base64"));
+  const credentials = new MemoryCredentialStore();
   let t: TestDatabase;
   let registry: UpstreamRegistry;
   let health: HealthChecker;
@@ -42,7 +43,10 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
   });
 
   beforeEach(async () => {
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+    registry = new UpstreamRegistry(credentials, {
+      maxResultBytes: 100_000,
+      ssrf: PERMISSIVE_POLICY,
+    });
     health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
     router = new ToolRouter(t.db, registry);
     // Two WooCommerce-shaped servers exposing the same tool name.
@@ -77,7 +81,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
   }
 
   it("lists namespaced tools from every connected server, with collisions kept apart", async () => {
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names).toContain("store-a__list_products");
     expect(names).toContain("store-b__list_products");
     expect(names).toContain("store-a__fail");
@@ -122,7 +126,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
 
   it("hides a disabled server's tools and rejects direct calls to them", async () => {
     await updateServer(t.db, ids["store-a"], { enabled: false });
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names.some((n) => n.startsWith("store-a__"))).toBe(false);
     expect(names).toContain("store-b__list_products");
 
@@ -158,7 +162,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
     expect(await lastAudit()).toMatchObject({ outcome: "unreachable", server_slug: "store-a" });
     expect((await getServer(t.db, ids["store-a"]))?.status).toBe("unreachable");
 
-    const names = (await router.listTools()).map((tool) => tool.name);
+    const names = (await router.listTools(ctx.principal)).map((tool) => tool.name);
     expect(names.some((n) => n.startsWith("store-a__"))).toBe(false);
     expect(names).toContain("store-b__list_products");
   });

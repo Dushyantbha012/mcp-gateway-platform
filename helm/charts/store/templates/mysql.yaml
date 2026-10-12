@@ -39,9 +39,26 @@ spec:
         {{- include "store.labels" . | nindent 8 }}
         {{- include "store.selector" (list . "mysql") | nindent 8 }}
     spec:
+      # No API access: the database has no reason to talk to Kubernetes.
+      automountServiceAccountToken: false
+      securityContext:
+        # Start as the "mysql" user directly (the image's entrypoint would
+        # otherwise start as root and drop privileges), so the container
+        # never holds root. fsGroup makes the data volume writable by it.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mysql
           image: {{ .Values.mysql.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: mysql
               containerPort: 3306
@@ -84,6 +101,17 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
+            # Everything else is read-only; the server needs a place for its
+            # socket/pid file and temp files.
+            - name: run
+              mountPath: /var/run/mysqld
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

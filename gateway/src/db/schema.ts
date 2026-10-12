@@ -7,7 +7,8 @@ type CreatedAt = ColumnType<Date, Date | undefined, never>;
 export type Role = "admin" | "member";
 export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "unknown";
-export type AuditOutcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected";
+export type AuditOutcome =
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
 export type AuditSource = "mcp" | "chat";
 
 export interface UsersTable {
@@ -42,7 +43,8 @@ export interface McpServersTable {
   enabled: Generated<boolean>;
   auth_type: Generated<AuthType>;
   auth_header_name: string | null;
-  credential_ciphertext: Buffer | null;
+  /** Whether the credential store (a Kubernetes Secret) holds a value for this server. */
+  has_credential: Generated<boolean>;
   timeout_ms: Generated<number>;
   status: Generated<ServerStatus>;
   last_error: string | null;
@@ -86,6 +88,18 @@ export interface InvitesTable {
   used_at: Date | null;
 }
 
+export interface ToolPermissionsTable {
+  id: Generated<string>;
+  role: Role | null;
+  user_id: string | null;
+  server_slug: string;
+  /** Upstream's own tool name; null = every tool of the server. */
+  tool_name: string | null;
+  effect: "allow" | "deny";
+  created_by: string | null;
+  created_at: CreatedAt;
+}
+
 export interface Database {
   users: UsersTable;
   api_keys: ApiKeysTable;
@@ -93,6 +107,7 @@ export interface Database {
   audit_log: AuditLogTable;
   sessions: SessionsTable;
   invites: InvitesTable;
+  tool_permissions: ToolPermissionsTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -102,5 +117,6 @@ export type ApiKey = Selectable<ApiKeysTable>;
 export type McpServer = Selectable<McpServersTable>;
 export type NewMcpServer = Insertable<McpServersTable>;
 export type McpServerUpdate = Updateable<McpServersTable>;
+export type ToolPermissionRow = Selectable<ToolPermissionsTable>;
 export type AuditEntry = Selectable<AuditLogTable>;
 export type NewAuditEntry = Insertable<AuditLogTable>;

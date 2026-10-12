@@ -20,6 +20,7 @@ const NAV = [
   { to: "/tools", label: "Tools" },
   { to: "/keys", label: "API keys" },
   { to: "/team", label: "Team", admin: true },
+  { to: "/permissions", label: "Permissions", admin: true },
   { to: "/audit", label: "Audit log", admin: true },
 ];
 

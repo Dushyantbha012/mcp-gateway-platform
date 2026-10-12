@@ -6,12 +6,13 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 Planning docs (architecture, phased build plan, testing strategy, progress
 log) live outside this repo at [`../docs`](../docs) during development.
 
-**Status:** Phase 6 — the store (WordPress + WooCommerce + MySQL), our own
+**Status:** Phase 7 — the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
 log and REST API), the team dashboard (login, servers, tools, keys, team,
 audit) and the chat agent (Gemini tool loop, streamed to the dashboard) run
 on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
-DeepWiki) and the brief's whole definition of done scripted end to end.
+DeepWiki), the brief's whole definition of done scripted end to end, and
+per-role / per-user tool permissions on top.
 
 ## Layout
 
@@ -97,6 +98,8 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase4.sh   # dashboard: login, invites, keys, audit, live browser test
    ./scripts/verify-phase5.sh   # chat agent (needs the Gemini key)
    ./scripts/verify-phase6.sh   # three upstreams + the full definition of done (needs the GitHub token too)
+   ./scripts/verify-phase7.sh   # tool permissions (re-runs Phase 6 and 2-5)
+   ./scripts/verify-phase8.sh   # security hardening (re-runs everything above under default-deny networking)
    ```
 
    Each accepts `SKIP_DEPLOY=1` to check the running deployment without
@@ -198,7 +201,7 @@ curl -X POST http://gateway.local.test/api/servers \
 
 Every tool call (from any client) is written to the audit log with user,
 key, server, tool, time, duration and outcome (`success`, `tool_error`,
-`timeout`, `unreachable`, `rejected`).
+`timeout`, `unreachable`, `rejected`, `denied`).
 
 ## Connect more servers (GitHub, DeepWiki)
 
@@ -210,7 +213,8 @@ are added the way an admin would, through the gateway's API (the dashboard's
    settings → Fine-grained tokens; public repositories only; Metadata,
    Contents, Issues and Pull requests set to _Read_, nothing with write).
    Read-only matters: GitHub's server exposes 49 tools, many of which write,
-   and the chat agent has no per-tool permissions until Phase 7. Save it
+   so a read-only token is still the right defence in depth, even though
+   Phase 7 permissions can hide those tools from members. Save it
    outside the repo:
 
    ```bash
@@ -225,8 +229,8 @@ are added the way an admin would, through the gateway's API (the dashboard's
    ./scripts/register-upstreams.sh --rotate-github  # replace GitHub's token later
    ```
 
-The token is sent to the gateway once, stored AES-256-GCM-encrypted in its
-Postgres, and added to GitHub calls server-side; no response, log or Helm
+The token is sent to the gateway once, stored as a Kubernetes Secret in the
+`urumi-upstreams` namespace (see "Security hardening"), and added to GitHub calls server-side; no response, log or Helm
 value ever contains it (`verify-phase6.sh` greps for it). Tools appear as
 `github__*` and `deepwiki__*` next to `woocommerce__*`.
 
@@ -275,7 +279,7 @@ Ingress sends `/api` to the gateway.
    Change it from the account menu (top right) after the first login.
 
 2. **Servers**: WooCommerce shows **Connected** with its 5 tools. Add a
-   server (credentials are stored encrypted and never shown again — leave
+   server (credentials are stored as a Kubernetes Secret and never shown again — leave
    the field blank on edit to keep the current one), toggle it off/on,
    "Check" it now, or remove it. Status refreshes every 5s; a dead server shows
    **Unreachable** with the reason within one health interval (15s).
@@ -293,6 +297,24 @@ Ingress sends `/api` to the gateway.
 5. **Audit log** (admin): every tool call with user, source, server, tool,
    duration and outcome; filter by user/server/outcome/source, "Live"
    refreshes every 5s.
+
+6. **Permissions** (admin): choose which tools members can see and call.
+   Pick "All members" or one person, then set **Allow**, **Deny** or
+   **Inherit** on a whole server or on a single tool. The "Result for them"
+   column shows what that subject actually gets and why. Rules:
+   - Everything is allowed unless a rule says otherwise; admins are never
+     restricted.
+   - The most specific rule wins: a rule for one person beats a rule for all
+     members, a tool rule beats a server rule, and deny beats allow when
+     they are equally specific. A server rule also covers tools the upstream
+     adds later.
+   - A denied tool is missing from that member's `tools/list` and from the
+     chat agent's tool list, and a direct `tools/call` is refused
+     (`You don't have permission to use ...`) without reaching the upstream.
+     The attempt is audited with outcome `denied`.
+   - Rules are read on every request, so a change applies on the member's
+     next call, on every gateway replica. Removing a server deletes its rules;
+     renaming its slug moves them.
 
 Revoking a key (API keys, or a member's keys on Team) rejects its very next
 MCP call; disabling a member ends their dashboard session and keys at once.
@@ -328,6 +350,39 @@ a turn is one request. Check your key's limits at
 https://aistudio.google.com/rate-limit and change `gateway.chat.model` if you
 want a stronger model.
 
+## Security hardening
+
+Four controls, each tested on its own and re-checked by `./scripts/verify-phase8.sh`:
+
+- **SSRF guard on "add server".** The gateway makes the requests to upstream
+  URLs from inside the cluster, so a URL like `http://169.254.169.254/`,
+  `http://localhost:5432` or `http://platform-gateway-postgres:5432` must never
+  work. Upstream URLs must resolve to public addresses (all of them; IPv4,
+  IPv6, mapped and encoded forms included), checked when you save and again on
+  every connection with the address actually connected to, so DNS rebinding
+  and redirects don't get around it. The in-cluster WooCommerce MCP server is
+  allowed because its host is allowlisted in Helm (`gateway.ssrf.allowedHosts`
+  adds more; nothing in the dashboard or API can). Code: `gateway/src/security/ssrf.ts`.
+- **Credentials are Kubernetes Secrets.** Each upstream's token is one Secret
+  in the `urumi-upstreams` namespace; Postgres only records that a credential
+  exists. The gateway's ServiceAccount may manage Secrets in that namespace and
+  nothing else (it can't read `gateway-db`, can't list pods), and it is the
+  only pod with a ServiceAccount token. Inspect it with
+  `kubectl -n urumi-upstreams get secrets` and
+  `kubectl auth can-i get secrets -n urumi --as=system:serviceaccount:urumi:platform-gateway`.
+- **Deny-by-default networking.** `helm/templates/networkpolicies.yaml` denies
+  all ingress and egress, then allows only the flows in the diagram at the top
+  of that file. The gateway can reach the public internet (Gemini, GitHub,
+  DeepWiki) but not private ranges, the node or cloud metadata. Prove it:
+  `python3 scripts/netpol_matrix.py` prints a 9x10 table of what each workload
+  can reach. On a new cluster set `global.networkPolicy.apiServerCidr` to the
+  node IP where the API server listens (`kubectl get endpoints kubernetes`).
+- **Restricted pods.** Every container is non-root with a read-only root
+  filesystem, no capabilities, a seccomp profile and no ServiceAccount token (the
+  gateway aside). The namespace enforces the Pod Security `restricted`
+  profile, so a bare `kubectl run` there is refused. `python3 scripts/audit-pods.py`
+  checks the running pods; CI checks the rendered chart.
+
 ## Tests
 
 ```bash
@@ -340,6 +395,7 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase4.sh   # dashboard, live (incl. a Playwright run against dashboard.local.test)
 ./scripts/verify-phase5.sh   # chat agent, live against the real Gemini API (reads GEMINI_API_KEY or ~/.config/urumi/gemini.env); then re-runs phases 2-4
 ./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real Gemini, GitHub, DeepWiki), then re-runs phases 2-5
+./scripts/verify-phase7.sh   # the same suite plus its tool-permissions step, live permission/audit checks, then re-runs phases 2-5
 ```
 
 The definition-of-done suite alone (cluster up, upstreams registered):
@@ -378,10 +434,12 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   sent back to the model.
 - **The chat agent doesn't ask before destructive tools.** It acts with the
   user's own permissions and every call is audited, but there is no
-  per-tool confirmation or allow-list until Phase 7. Until then the GitHub
-  upstream uses a read-only token, so its write tools exist but GitHub
-  rejects them (HTTP 403). WooCommerce's `create_product` and
-  `update_order_status` do work for every member.
+  per-call confirmation. Permissions are allow-by-default: until an admin
+  denies a tool, WooCommerce's `create_product` and `update_order_status` work
+  for every member, and a new tool an upstream adds later is available to
+  members too (deny the whole server, or the tool, on the Permissions page).
+  The GitHub upstream also uses a read-only token, so its write tools are
+  rejected by GitHub (HTTP 403) even if permitted.
 - **GitHub and DeepWiki are external.** The suite needs internet access and
   can fail for reasons that aren't ours (DeepWiki down, GitHub token
   expired); the gateway then marks that one server Unreachable and the rest
@@ -390,4 +448,13 @@ Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
   memory), like the login limiter, and the Gemini free tier has a daily cap.
 - **Login rate limiting is per gateway pod** (in memory). With more
   replicas an attacker gets that many times the attempts; a shared store
-  is a Phase 8 item.
+  (or a rate limit at the ingress) would fix it and is not done.
+- **Prompt injection is not solved.** A malicious public upstream can put
+  instructions in its tool descriptions or results, and the chat agent may
+  follow them. Damage is limited to what the user could already do (their
+  permissions, the audit log, GitHub's read-only token), not prevented.
+- **The SSRF guard resolves names with the cluster resolver.** A resolver that
+  lies is out of scope; the egress NetworkPolicy (no private ranges) is the
+  second wall behind the code check.
+- **Credentials rotate on other replicas within about 5 seconds** (a short
+  cache avoids a Kubernetes API call per tool call).

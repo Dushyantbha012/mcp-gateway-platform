@@ -28,7 +28,7 @@ function createGatewayServer(router: ToolRouter, principal: Principal): Server {
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: await router.listTools(),
+    tools: await router.listTools(principal),
   }));
   server.setRequestHandler(CallToolRequestSchema, async (request) =>
     router.callTool({ principal, source: "mcp" }, request.params.name, request.params.arguments),

@@ -215,8 +215,7 @@ E2E_BASE_URL="$DASH" E2E_ADMIN_EMAIL="$ADMIN_EMAIL" E2E_ADMIN_PASSWORD="$ADMIN_P
 
 step "No secret values in the Helm release"
 manifest=$(helm get manifest "$RELEASE" -n "$NS")
-for value in "$ADMIN_PASSWORD" "$(secret gateway-bootstrap-admin api-key)" "$(secret woocommerce-mcp-auth token)" \
-  "$(secret gateway-encryption-key key)"; do
+for value in "$ADMIN_PASSWORD" "$(secret gateway-bootstrap-admin api-key)" "$(secret woocommerce-mcp-auth token)"; do
   grep -qF "$value" <<<"$manifest" && fail "a secret value appears in the Helm release"
 done
 echo "ok"
