@@ -1,4 +1,10 @@
 # Overrides for local k3d. Merge with: helm install ... -f values.yaml -f values-local.yaml
+global:
+  networkPolicy:
+    # k3d's single node, where the API server listens (kubectl get endpoints
+    # kubernetes). Changes if the cluster is recreated.
+    apiServerCidr: 172.18.0.3/32
+
 store:
   ingress:
     host: store.local.test
