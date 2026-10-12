@@ -9,6 +9,7 @@ import type { McpServer, McpServerUpdate } from "../db/schema.js";
 import { deleteRulesForServer, renameServerRules } from "../db/permissions.js";
 import { deleteServer, getServer, insertServer, listServers, updateServer } from "../db/servers.js";
 import { displayStatus, type HealthChecker } from "../upstreams/health.js";
+import { checkUrl, SsrfError, type SsrfPolicy } from "../security/ssrf.js";
 import { buildToolIndex, SLUG_PATTERN } from "../upstreams/naming.js";
 import type { UpstreamRegistry } from "../upstreams/registry.js";
 import { conflictOnDuplicate, HttpError, notFound, parse } from "./errors.js";
@@ -112,8 +113,9 @@ export function serversApi(deps: {
   box: SecretBox;
   registry: UpstreamRegistry;
   health: HealthChecker;
+  ssrf: SsrfPolicy;
 }) {
-  const { db, box, registry, health } = deps;
+  const { db, box, registry, health, ssrf } = deps;
   const api = express.Router();
 
   const load = async (id: unknown) => {
@@ -121,6 +123,18 @@ export function serversApi(deps: {
     const server = parsed.success ? await getServer(db, parsed.data) : undefined;
     if (!server) throw notFound("Server");
     return server;
+  };
+
+  /** Refuses URLs that point at internal services (see security/ssrf.ts). */
+  const checkTarget = async (url: string) => {
+    try {
+      await checkUrl(url, ssrf);
+    } catch (err) {
+      if (err instanceof SsrfError) {
+        throw new HttpError(400, "url_not_allowed", `The server URL ${err.message}`);
+      }
+      throw err;
+    }
   };
 
   api.get("/", async (_req, res) => {
@@ -138,6 +152,7 @@ export function serversApi(deps: {
     const headerName = body.authType === "header" ? (body.authHeaderName ?? null) : null;
     const credential = body.authType === "none" ? null : (body.credential ?? null);
     checkAuth(body.authType, headerName, credential !== null);
+    await checkTarget(body.url);
     const id = randomUUID(); // known up front: it's the credential's associated data
     const created = await insertServer(db, {
       id,
@@ -175,6 +190,7 @@ export function serversApi(deps: {
     const hasCredential =
       authType !== "none" && (body.credential ? true : current.credential_ciphertext !== null);
     checkAuth(authType, changes.auth_header_name ?? null, hasCredential);
+    if (body.url !== undefined) await checkTarget(body.url);
 
     const updated = await updateServer(db, current.id, changes).catch(
       conflictOnDuplicate(`A server with slug '${body.slug}'`),

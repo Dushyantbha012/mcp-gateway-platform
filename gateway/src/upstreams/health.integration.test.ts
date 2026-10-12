@@ -6,6 +6,7 @@ import { deadUrl, startFakeUpstream, type FakeUpstream } from "../test/fakeUpstr
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 import { displayStatus, HealthChecker } from "./health.js";
 import { UpstreamRegistry } from "./registry.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 describe.skipIf(!hasTestDb)("health checks + registry", () => {
   const box = createSecretBox(randomBytes(32).toString("base64"));
@@ -28,7 +29,7 @@ describe.skipIf(!hasTestDb)("health checks + registry", () => {
   });
 
   function setup(intervalMs = 60_000) {
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
     health = new HealthChecker(t.db, registry, { intervalMs, listTimeoutMs: 300 });
   }
 

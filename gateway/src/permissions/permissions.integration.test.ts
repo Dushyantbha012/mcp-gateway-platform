@@ -19,6 +19,7 @@ import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb
 import { HealthChecker } from "../upstreams/health.js";
 import { UpstreamRegistry } from "../upstreams/registry.js";
 import { ToolRouter } from "../upstreams/router.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 // The fake upstream always adds `fail` and `big` helper tools; they are not under test.
 const real = (n: string) => !/__(fail|big)$/.test(n);
@@ -50,7 +51,7 @@ describe.skipIf(!hasTestDb)("tool permissions", () => {
     ] as const) {
       await insertServer(t.db, { slug, name: slug, url: f.url, timeout_ms: 5_000 });
     }
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
     const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 5_000 });
     await health.checkAll();
 

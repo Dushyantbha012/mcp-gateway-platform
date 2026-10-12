@@ -6,6 +6,7 @@ import { createDb, migrate, waitForDatabase } from "./db/db.js";
 import { log } from "./logger.js";
 import { GeminiClient } from "./chat/gemini.js";
 import { seed } from "./seed.js";
+import { policyFrom } from "./security/ssrf.js";
 import { HealthChecker } from "./upstreams/health.js";
 import { UpstreamRegistry } from "./upstreams/registry.js";
 import { ToolRouter } from "./upstreams/router.js";
@@ -30,7 +31,13 @@ const applied = await migrate(db);
 if (applied.length) log("info", "applied migrations", { migrations: applied });
 await seed(db, box, config);
 
-const registry = new UpstreamRegistry(box, { maxResultBytes: config.maxResultBytes });
+// Private hostnames that are allowed on purpose: the allowlist from Helm, plus
+// the seeded in-cluster WooCommerce MCP server.
+const ssrf = policyFrom([
+  ...config.ssrfAllowedHosts,
+  ...(config.seedWoocommerce ? [new URL(config.seedWoocommerce.url).hostname] : []),
+]);
+const registry = new UpstreamRegistry(box, { maxResultBytes: config.maxResultBytes, ssrf });
 const health = new HealthChecker(db, registry, {
   intervalMs: config.healthIntervalMs,
   listTimeoutMs: config.listTimeoutMs,
@@ -51,7 +58,7 @@ log("info", chat ? "chat agent enabled" : "chat agent disabled (no GEMINI_API_KE
   model: config.chat?.model,
 });
 
-const app = createApp({ db, box, registry, health, router, config, chat });
+const app = createApp({ db, box, registry, health, router, ssrf, config, chat });
 const server = app.listen(config.port, "0.0.0.0", () => {
   log("info", "gateway listening", { port: config.port });
 });

@@ -70,6 +70,8 @@ spec:
                   key: key
             - name: HEALTH_INTERVAL_MS
               value: {{ .Values.gateway.healthIntervalMs | quote }}
+            - name: SSRF_ALLOWED_HOSTS
+              value: {{ join "," .Values.gateway.ssrf.allowedHosts | quote }}
             - name: LIST_TIMEOUT_MS
               value: {{ .Values.gateway.listTimeoutMs | quote }}
             - name: BOOTSTRAP_ADMIN_EMAIL

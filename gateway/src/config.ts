@@ -40,6 +40,9 @@ const schema = z
     BOOTSTRAP_ADMIN_PASSWORD: optionalString.pipe(
       z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH).optional(),
     ),
+    // Hostnames that may resolve to private addresses despite the SSRF guard
+    // (exact match). The seeded WooCommerce host is added automatically.
+    SSRF_ALLOWED_HOSTS: commaList,
     SEED_WOOCOMMERCE_URL: optionalString.pipe(z.url().optional()),
     SEED_WOOCOMMERCE_TOKEN: optionalString,
     // Public URLs, from Helm values. DASHBOARD_URL builds invite links;
@@ -115,6 +118,7 @@ export interface Config {
   listTimeoutMs: number;
   maxResultBytes: number;
   trustProxyHops: number;
+  ssrfAllowedHosts: string[];
   auth: AuthConfig;
   /** Undefined when no GEMINI_API_KEY is set: chat is switched off. */
   chat?: ChatConfig;
@@ -140,6 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     listTimeoutMs: e.LIST_TIMEOUT_MS,
     maxResultBytes: e.MAX_RESULT_BYTES,
     trustProxyHops: e.TRUST_PROXY_HOPS,
+    ssrfAllowedHosts: e.SSRF_ALLOWED_HOSTS,
     auth: {
       dashboardUrl: e.DASHBOARD_URL?.replace(/\/+$/, ""),
       publicMcpUrl: e.PUBLIC_MCP_URL,

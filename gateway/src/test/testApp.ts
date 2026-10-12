@@ -12,6 +12,7 @@ import { createUser, setPasswordHash } from "../db/users.js";
 import { HealthChecker } from "../upstreams/health.js";
 import { UpstreamRegistry } from "../upstreams/registry.js";
 import { ToolRouter } from "../upstreams/router.js";
+import { PERMISSIVE_POLICY, type SsrfPolicy } from "../security/ssrf.js";
 
 export const TEST_ORIGIN = "http://dashboard.test";
 
@@ -28,14 +29,15 @@ export const testAuthConfig: AuthConfig = {
 export function buildTestApp(
   db: Db,
   auth: Partial<AuthConfig> = {},
-  opts: { trustProxyHops?: number; chat?: ChatSetup } = {},
+  opts: { trustProxyHops?: number; chat?: ChatSetup; ssrf?: SsrfPolicy } = {},
 ) {
   const box = createSecretBox(randomBytes(32).toString("base64"));
-  const registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+  const ssrf = opts.ssrf ?? PERMISSIVE_POLICY;
+  const registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf });
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const router = new ToolRouter(db, registry);
   const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
-  const deps = { db, box, registry, health, router, config, chat: opts.chat };
+  const deps = { db, box, registry, health, router, ssrf, config, chat: opts.chat };
   return { ...deps, app: createApp(deps) };
 }
 

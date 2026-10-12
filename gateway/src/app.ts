@@ -12,6 +12,7 @@ import type { Config } from "./config.js";
 import type { SecretBox } from "./crypto/secretBox.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
+import type { SsrfPolicy } from "./security/ssrf.js";
 import type { HealthChecker } from "./upstreams/health.js";
 import type { UpstreamRegistry } from "./upstreams/registry.js";
 import type { ToolRouter } from "./upstreams/router.js";
@@ -22,6 +23,8 @@ export interface AppDeps {
   registry: UpstreamRegistry;
   health: HealthChecker;
   router: ToolRouter;
+  /** Which upstream URLs may be registered (SSRF guard). */
+  ssrf: SsrfPolicy;
   config: Pick<Config, "auth" | "trustProxyHops">;
   /** The chat agent's model and limits; absent = chat switched off (503). */
   chat?: ChatSetup;

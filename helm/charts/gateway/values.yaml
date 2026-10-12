@@ -52,6 +52,12 @@ gateway:
     maxSteps: 8
     turnTimeoutMs: 90000
     turnsPerMinute: 6
+  # SSRF guard: upstream URLs must resolve to public addresses. Hostnames
+  # listed here (exact match) may resolve to private ones - for in-cluster MCP
+  # servers. The seeded WooCommerce server's host is allowed automatically.
+  # Deliberately Helm-only: nothing in the dashboard or API can widen it.
+  ssrf:
+    allowedHosts: []
   resources:
     requests: { cpu: 50m, memory: 96Mi }
     limits: { cpu: 500m, memory: 384Mi }

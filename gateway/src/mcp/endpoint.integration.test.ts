@@ -21,6 +21,7 @@ import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb
 import { HealthChecker } from "../upstreams/health.js";
 import { UpstreamRegistry } from "../upstreams/registry.js";
 import { ToolRouter } from "../upstreams/router.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 /**
  * The exit criterion for Phase 3, over the real protocol: a real MCP SDK
@@ -64,7 +65,7 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     await add("hanging", hanging.url);
     await add("dead", await deadUrl());
 
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
     // Each server's check is capped by min(its timeout, listTimeoutMs).
     const health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 5_000 });
     await health.checkAll(); // hanging + dead -> unreachable; then make "hanging" look healthy

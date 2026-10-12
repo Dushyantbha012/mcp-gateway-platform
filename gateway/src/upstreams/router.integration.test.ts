@@ -12,6 +12,7 @@ import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb
 import { HealthChecker } from "./health.js";
 import { UpstreamRegistry } from "./registry.js";
 import { ToolRouter, type CallContext } from "./router.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 const text = (r: CallToolResult) => (r.content[0] as { text: string }).text;
 
@@ -42,7 +43,7 @@ describe.skipIf(!hasTestDb)("ToolRouter", () => {
   });
 
   beforeEach(async () => {
-    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000 });
+    registry = new UpstreamRegistry(box, { maxResultBytes: 100_000, ssrf: PERMISSIVE_POLICY });
     health = new HealthChecker(t.db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
     router = new ToolRouter(t.db, registry);
     // Two WooCommerce-shaped servers exposing the same tool name.

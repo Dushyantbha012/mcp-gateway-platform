@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SecretBox } from "../crypto/secretBox.js";
 import type { McpServer } from "../db/schema.js";
+import type { SsrfPolicy } from "../security/ssrf.js";
 import { UpstreamConnection, type UpstreamConfig } from "./connection.js";
 
 /**
@@ -15,7 +16,7 @@ export class UpstreamRegistry {
 
   constructor(
     private readonly box: SecretBox,
-    private readonly opts: { maxResultBytes: number },
+    private readonly opts: { maxResultBytes: number; ssrf: SsrfPolicy },
   ) {}
 
   get(server: McpServer): UpstreamConnection {

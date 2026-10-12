@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { deadUrl, startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
 import { UpstreamConnection, UpstreamError, type UpstreamConfig } from "./connection.js";
+import { PERMISSIVE_POLICY } from "../security/ssrf.js";
 
 const started: FakeUpstream[] = [];
 const connections: UpstreamConnection[] = [];
@@ -19,7 +20,7 @@ async function fake(opts: Parameters<typeof startFakeUpstream>[0] = {}) {
 function connect(url: string, overrides: Partial<UpstreamConfig> = {}) {
   const conn = new UpstreamConnection(
     { id: "id-1", slug: "fake", url, headers: {}, timeoutMs: 400, ...overrides },
-    { maxResultBytes: 10_000 },
+    { maxResultBytes: 10_000, ssrf: PERMISSIVE_POLICY },
   );
   connections.push(conn);
   return conn;
