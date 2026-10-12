@@ -1,3 +1,4 @@
+/* global process */
 // Turns `helm template` output (multi-document YAML on stdin) into a
 // `kubectl get pods -o json`-shaped list of the pod templates inside every
 // Deployment, StatefulSet, Job and DaemonSet, so scripts/audit-pods.py can
