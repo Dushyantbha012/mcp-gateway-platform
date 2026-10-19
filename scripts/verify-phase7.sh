@@ -116,8 +116,14 @@ code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
   -d '{"role":"member","serverSlug":"woocommerce","toolName":null,"effect":"allow"}' "$GW/api/permissions")" = 403 ] ||
   fail "a member can write /api/permissions"
 [ "$(code "$GW/api/permissions")" = 401 ] || fail "/api/permissions is reachable without a key"
+# The only standing rule is the one register-upstreams.sh creates: DeepWiki's tools carry no
+# readOnlyHint, so members are allowed that server (members are read-only by default).
 RULES=$(curl -s -H "Authorization: Bearer $ADMIN_KEY" "$GW/api/permissions")
-[ "$RULES" = "[]" ] || fail "the system suite left permission rules behind: $RULES"
+python3 -c '
+import json, sys
+rules = json.load(sys.stdin)
+extra = [r for r in rules if not (r["subject"] == {"type": "role", "role": "member"} and r["serverSlug"] == "deepwiki" and r["toolName"] is None and r["effect"] == "allow")]
+sys.exit(1 if extra else 0)' <<<"$RULES" || fail "the system suite left permission rules behind: $RULES"
 curl -s -H "Authorization: Bearer $ADMIN_KEY" "$GW/api/audit?outcome=denied&limit=50" | python3 -c '
 import json, sys
 rows = json.load(sys.stdin)

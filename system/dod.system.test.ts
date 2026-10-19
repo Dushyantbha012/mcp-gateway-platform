@@ -60,6 +60,7 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
   const clients: Client[] = [];
   const outDir = mkdtempSync(join(tmpdir(), "dod-"));
   let a: Person;
+  let aGrantId: string | undefined;
   let b: Person;
   let productName: string;
   let orderId: number;
@@ -224,10 +225,34 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     await waitStatus("deepwiki", "connected");
     a = await createPerson("a");
     b = await createPerson("b");
+    // Members are read-only by default (tools with readOnlyHint). DeepWiki's tools carry
+    // no hint, so it is allowed for every member (register-upstreams.sh does the same);
+    // user A alone is also allowed to create products, user B stays read-only.
+    await api("/permissions", {
+      method: "PUT",
+      body: JSON.stringify({
+        role: "member",
+        serverSlug: "deepwiki",
+        toolName: null,
+        effect: "allow",
+      }),
+    });
+    const grant = await api("/permissions", {
+      method: "PUT",
+      body: JSON.stringify({
+        userId: a.id,
+        serverSlug: "woocommerce",
+        toolName: "create_product",
+        effect: "allow",
+      }),
+    });
+    expect(grant.status).toBe(200);
+    aGrantId = grant.body.id;
   });
 
   afterAll(async () => {
     await Promise.all(clients.map((c) => c.close().catch(() => undefined)));
+    if (aGrantId) await api(`/permissions/${aGrantId}`, { method: "DELETE" });
     for (const id of [wooId, deepwikiId]) await patch(`/servers/${id}`, { enabled: true });
     kubectl("scale", `deployment/${env.wooDeployment}`, "--replicas=1");
     for (const p of [a, b]) if (p) await patch(`/users/${p.id}`, { disabled: true });
@@ -333,42 +358,46 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     expect(events.at(-1)?.type).toBe("done");
   });
 
-  it("Tool permissions: a tool denied to members disappears for them and is refused if called, admins keep it", async () => {
+  it("Tool permissions: members are read-only by default; an Allow grants a write tool, admins are unrestricted", async () => {
     const hidden = "woocommerce__update_order_status";
+    // User B's external client: write tools hidden from tools/list, read tools intact.
+    const client = await connect(b.key);
+    const names = await toolNames(client);
+    expect(names).not.toContain(hidden);
+    expect(names).not.toContain("woocommerce__create_product");
+    expect(names).toContain("woocommerce__list_orders");
+
+    // A client still holding an old list is refused, and it is audited as denied.
+    const refused = await call(b, client, hidden, { id: orderId, status: "completed" }, "denied");
+    expect(textOf(refused)).toContain("don't have permission");
+
+    // The chat agent gets exactly the same view, as user A (who may also create products).
+    const chatView = (await api("/tools", { key: a.key })).body as { name: string }[];
+    expect(chatView.map((t) => t.name)).not.toContain(hidden);
+    expect(chatView.map((t) => t.name)).toContain("woocommerce__create_product");
+    expect(chatView.map((t) => t.name)).toContain("woocommerce__list_orders");
+
+    // Admins are not restricted.
+    const adminView = (await api("/tools")).body as { name: string }[];
+    expect(adminView.map((t) => t.name)).toContain(hidden);
+
+    // An Allow for all members brings the tool to B on the very next list; removing it hides it again.
     const rule = await api("/permissions", {
       method: "PUT",
       body: JSON.stringify({
         role: "member",
         serverSlug: "woocommerce",
         toolName: "update_order_status",
-        effect: "deny",
+        effect: "allow",
       }),
     });
     expect(rule.status).toBe(200);
     try {
-      // User B's external client: hidden from tools/list, the rest of the server intact.
-      const client = await connect(b.key);
-      const names = await toolNames(client);
-      expect(names).not.toContain(hidden);
-      expect(names).toContain("woocommerce__list_orders");
-
-      // A client still holding the old list is refused, and it is audited as denied.
-      const refused = await call(b, client, hidden, { id: orderId, status: "completed" }, "denied");
-      expect(textOf(refused)).toContain("don't have permission");
-
-      // The chat agent is given exactly the same view, as user A.
-      const chatView = (await api("/tools", { key: a.key })).body as { name: string }[];
-      expect(chatView.map((t) => t.name)).not.toContain(hidden);
-      expect(chatView.map((t) => t.name)).toContain("woocommerce__list_orders");
-
-      // Admins are not restricted.
-      const adminView = (await api("/tools")).body as { name: string }[];
-      expect(adminView.map((t) => t.name)).toContain(hidden);
+      expect(await toolNames(await connect(b.key))).toContain(hidden);
     } finally {
       await api(`/permissions/${rule.body.id}`, { method: "DELETE" });
     }
-    // Removing the rule brings the tool back on the very next list.
-    expect(await toolNames(await connect(b.key))).toContain(hidden);
+    expect(await toolNames(await connect(b.key))).not.toContain(hidden);
   });
 
   it("Revoke user B's key: the next call is rejected", async () => {

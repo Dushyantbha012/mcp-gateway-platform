@@ -106,6 +106,19 @@ spec:
               {{- toYaml $np.ingressController.podLabels | nindent 14 }}
       ports:
         - port: 8080
+{{- if $np.metricsScrape.enabled }}
+    # Prometheus scraping /metrics. The route isn't on the Ingress, so this is
+    # the only way in from outside the namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.metricsScrape.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml (required "global.networkPolicy.metricsScrape.podLabels must name the Prometheus pods (an empty selector would admit every pod in the namespace)" $np.metricsScrape.podLabels) | nindent 14 }}
+      ports:
+        - port: 8080
+{{- end }}
   egress:
     - to:
         - podSelector:

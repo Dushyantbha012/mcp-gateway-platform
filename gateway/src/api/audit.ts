@@ -12,6 +12,10 @@ const querySchema = z.object({
     .enum(["success", "tool_error", "timeout", "unreachable", "rejected", "denied"])
     .optional(),
   source: z.enum(["mcp", "chat"]).optional(),
+  requestId: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]{1,128}$/)
+    .optional(),
   before: z.string().regex(/^\d+$/).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(50),
 });
@@ -26,6 +30,7 @@ export function auditApi(db: Db) {
       serverSlug: q.server,
       outcome: q.outcome,
       source: q.source,
+      requestId: q.requestId,
       beforeId: q.before,
       limit: q.limit,
     });
@@ -42,6 +47,8 @@ export function auditApi(db: Db) {
         durationMs: e.duration_ms,
         outcome: e.outcome,
         error: e.error,
+        requestId: e.request_id,
+        detail: e.detail,
       })),
     );
   });

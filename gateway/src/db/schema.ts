@@ -67,6 +67,10 @@ export interface AuditLogTable {
   duration_ms: number;
   outcome: AuditOutcome;
   error: string | null;
+  /** The `X-Request-ID` of the request that made the call; null for older rows. */
+  request_id: string | null;
+  /** Context that isn't an error, e.g. the query of a `search_tools` call. */
+  detail: string | null;
 }
 
 export interface SessionsTable {

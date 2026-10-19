@@ -6,7 +6,7 @@ import type { Db } from "../db/db.js";
 import { deleteRule, listPermissionRows, toRule, upsertRule } from "../db/permissions.js";
 import { getServerBySlug, listServers } from "../db/servers.js";
 import { getUser, listUsers } from "../db/users.js";
-import { decide } from "../permissions/evaluate.js";
+import { decide, type MemberDefault } from "../permissions/evaluate.js";
 import { buildToolIndex } from "../upstreams/naming.js";
 import { HttpError, notFound, parse } from "./errors.js";
 
@@ -28,7 +28,7 @@ const ruleSchema = z
  * Admin-only management of tool permissions. Members never see the rules (or
  * learn that they exist, beyond a missing tool or a denied call).
  */
-export function permissionsApi(db: Db) {
+export function permissionsApi(db: Db, memberDefault: MemberDefault = "allowAll") {
   const api = express.Router();
   api.use(requireAdmin);
 
@@ -106,7 +106,12 @@ export function permissionsApi(db: Db) {
         { slug: server.slug, name: server.name, tools: (server.tools_cache ?? []) as Tool[] },
       ]);
       for (const [name, route] of index.routes) {
-        const d = decide(subject, { serverSlug: route.slug, toolName: route.upstreamName }, rules);
+        const d = decide(
+          subject,
+          { serverSlug: route.slug, toolName: route.upstreamName, readOnly: route.readOnly },
+          rules,
+          memberDefault,
+        );
         out.push({
           name,
           serverSlug: route.slug,

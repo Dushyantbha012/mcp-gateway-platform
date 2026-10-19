@@ -22,11 +22,21 @@ export interface Subject {
 export interface ToolRef {
   serverSlug: string;
   toolName: string;
+  /** The upstream marked the tool `readOnlyHint: true`. Absent/false = it may change things. */
+  readOnly?: boolean;
 }
+
+/**
+ * What a member may use when no rule matches. `readOnly`: only tools the
+ * upstream marks read-only (an admin Allow rule grants the rest). `allowAll`:
+ * everything, until a Deny rule says otherwise.
+ */
+export type MemberDefault = "readOnly" | "allowAll";
 
 export type Decision =
   | { allowed: true; reason: "admin" | "default" | "rule"; rule?: PermissionRule }
-  | { allowed: false; reason: "rule"; rule: PermissionRule };
+  | { allowed: false; reason: "rule"; rule: PermissionRule }
+  | { allowed: false; reason: "read-only-default" };
 
 /**
  * Most specific rule wins. Who the rule is for outranks what it covers: a rule
@@ -41,9 +51,14 @@ const rank = (r: PermissionRule): number =>
  * and the admin preview - they can't disagree because they all call this.
  *
  * Admins are never restricted (an admin can't lock themselves out); everyone
- * else is allowed unless a matching rule says otherwise.
+ * else follows the matching rule, or the member default when there is none.
  */
-export function decide(subject: Subject, tool: ToolRef, rules: PermissionRule[]): Decision {
+export function decide(
+  subject: Subject,
+  tool: ToolRef,
+  rules: PermissionRule[],
+  memberDefault: MemberDefault = "allowAll",
+): Decision {
   if (subject.role === "admin") return { allowed: true, reason: "admin" };
 
   let best: PermissionRule | undefined;
@@ -62,11 +77,19 @@ export function decide(subject: Subject, tool: ToolRef, rules: PermissionRule[])
     }
   }
 
-  if (!best) return { allowed: true, reason: "default" };
+  if (!best) {
+    return memberDefault === "readOnly" && tool.readOnly !== true
+      ? { allowed: false, reason: "read-only-default" }
+      : { allowed: true, reason: "default" };
+  }
   return best.effect === "allow"
     ? { allowed: true, reason: "rule", rule: best }
     : { allowed: false, reason: "rule", rule: best };
 }
 
-export const isAllowed = (subject: Subject, tool: ToolRef, rules: PermissionRule[]): boolean =>
-  decide(subject, tool, rules).allowed;
+export const isAllowed = (
+  subject: Subject,
+  tool: ToolRef,
+  rules: PermissionRule[],
+  memberDefault: MemberDefault = "allowAll",
+): boolean => decide(subject, tool, rules, memberDefault).allowed;

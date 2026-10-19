@@ -5,9 +5,13 @@ import { K8sSecretStore } from "./credentials/k8s.js";
 import { sweepOrphanedCredentials } from "./credentials/sweep.js";
 import { MemoryCredentialStore } from "./credentials/store.js";
 import { createDb, migrate, waitForDatabase } from "./db/db.js";
+import { listServers } from "./db/servers.js";
 import { log } from "./logger.js";
+import { GatewayMetrics } from "./metrics/metrics.js";
+import { DEFAULT_LIMITS } from "./chat/agent.js";
 import { GeminiClient } from "./chat/gemini.js";
 import { seed } from "./seed.js";
+import { ToolSurface } from "./search/surface.js";
 import { policyFrom } from "./security/ssrf.js";
 import { HealthChecker } from "./upstreams/health.js";
 import { UpstreamRegistry } from "./upstreams/registry.js";
@@ -52,7 +56,13 @@ const health = new HealthChecker(db, registry, {
   intervalMs: config.healthIntervalMs,
   listTimeoutMs: config.listTimeoutMs,
 });
-const router = new ToolRouter(db, registry);
+const metrics = config.metricsEnabled ? new GatewayMetrics(() => listServers(db)) : undefined;
+const router = new ToolRouter(db, registry, metrics, config.memberDefault);
+const tools = new ToolSurface(
+  router,
+  { mode: config.searchMode, autoThreshold: config.searchAutoThreshold },
+  metrics,
+);
 health.start();
 
 const chat = config.chat && {
@@ -61,14 +71,36 @@ const chat = config.chat && {
     model: config.chat.model,
     baseUrl: config.chat.baseUrl,
   }),
-  limits: { maxSteps: config.chat.maxSteps, turnTimeoutMs: config.chat.turnTimeoutMs },
+  // Searching costs the model an extra step and call before each real tool.
+  limits: {
+    maxSteps: config.chat.maxSteps + (config.chat.searchMode === "off" ? 0 : 4),
+    ...(config.chat.searchMode === "off" ? {} : { maxToolCalls: DEFAULT_LIMITS.maxToolCalls + 8 }),
+    turnTimeoutMs: config.chat.turnTimeoutMs,
+  },
   turnsPerMinute: config.chat.turnsPerMinute,
+  searchMode: config.chat.searchMode,
+  searchAutoThreshold: config.searchAutoThreshold,
 };
+log("info", "tool surface", {
+  searchMode: config.searchMode,
+  chatSearchMode: config.chat?.searchMode,
+});
 log("info", chat ? "chat agent enabled" : "chat agent disabled (no GEMINI_API_KEY)", {
   model: config.chat?.model,
 });
 
-const app = createApp({ db, credentials, registry, health, router, ssrf, config, chat });
+const app = createApp({
+  db,
+  credentials,
+  registry,
+  health,
+  router,
+  ssrf,
+  config,
+  chat,
+  metrics,
+  tools,
+});
 const server = app.listen(config.port, "0.0.0.0", () => {
   log("info", "gateway listening", { port: config.port });
 });

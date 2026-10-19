@@ -4,6 +4,12 @@ global:
     # k3d's single node, where the API server listens (kubectl get endpoints
     # kubernetes). Changes if the cluster is recreated.
     apiServerCidr: 172.18.0.3/32
+    # Lets a Prometheus in the `monitoring` namespace scrape the gateway's /metrics.
+    metricsScrape:
+      enabled: true
+      namespace: monitoring
+      podLabels:
+        app.kubernetes.io/name: prometheus
 
 store:
   ingress:
@@ -12,6 +18,10 @@ store:
 
 gateway:
   gateway:
+    # The chat agent's model searches for tools instead of receiving all 57
+    # (fewer tokens per turn on the free tier); MCP clients still get the full list.
+    search:
+      chatMode: "on"
     ssrf:
       # Test fixture only: the live suites register a black-hole upstream here
       # to prove a hanging server can't slow anything else down.

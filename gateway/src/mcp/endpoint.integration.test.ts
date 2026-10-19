@@ -13,7 +13,8 @@ import { generateApiKey } from "../crypto/apiKeys.js";
 import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey, revokeApiKey } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
-import { insertServer } from "../db/servers.js";
+import { insertServer, listServers } from "../db/servers.js";
+import { GatewayMetrics } from "../metrics/metrics.js";
 import { createUser } from "../db/users.js";
 import { deadUrl, startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
 import { testAuthConfig } from "../test/testApp.js";
@@ -87,13 +88,15 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     userKey = k.key;
     userKeyId = (await insertApiKey(t.db, { userId: user.id, name: "cli", ...k })).id;
 
-    const router = new ToolRouter(t.db, registry);
+    const metrics = new GatewayMetrics(() => listServers(t.db));
+    const router = new ToolRouter(t.db, registry, metrics);
     http = createApp({
       db: t.db,
       credentials,
       registry,
       health,
       router,
+      metrics,
       config: { auth: testAuthConfig, trustProxyHops: 0 },
     }).listen(0, "127.0.0.1");
     await new Promise((resolve) => http.once("listening", resolve));
@@ -134,6 +137,50 @@ describe.skipIf(!hasTestDb)("gateway MCP endpoint", () => {
     ["a well-formed unknown key", generateApiKey().key],
   ])("rejects %s with 401", async (_label, key) => {
     await expectStatus(connect(key), 401);
+  });
+
+  it("tags the response and the audit row with the caller's request ID", async () => {
+    const requestId = `trace-${randomUUID()}`;
+    const client = new Client({ name: "endpoint-test", version: "1.0.0" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+        requestInit: {
+          headers: { Authorization: `Bearer ${userKey}`, "X-Request-ID": requestId },
+        },
+      }),
+    );
+    await client.callTool({ name: "woocommerce__list_orders", arguments: {} });
+    await client.close();
+
+    const rows = await queryAudit(t.db, { requestId });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ tool_name: "woocommerce__list_orders", outcome: "success" });
+
+    const echoed = await fetch(`${baseUrl}/healthz`, { headers: { "X-Request-ID": requestId } });
+    expect(echoed.headers.get("x-request-id")).toBe(requestId);
+    const generated = await fetch(`${baseUrl}/healthz`);
+    expect(generated.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("serves Prometheus metrics for calls and upstream health, without credentials", async () => {
+    const client = await connect(userKey);
+    await client.callTool({ name: "woocommerce__list_orders", arguments: {} });
+    await client.callTool({ name: "nosuch__tool", arguments: {} });
+    await client.close();
+
+    const res = await fetch(`${baseUrl}/metrics`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
+    const text = await res.text();
+    expect(text).toMatch(
+      /mcp_gateway_tool_calls_total\{server="woocommerce",tool="list_orders",source="mcp",outcome="success"\} [1-9]/,
+    );
+    expect(text).toMatch(
+      /mcp_gateway_tool_calls_total\{server="unknown",tool="unknown",source="mcp",outcome="rejected"\} [1-9]/,
+    );
+    expect(text).toMatch(/mcp_gateway_tool_call_duration_seconds_count\{server="woocommerce"/);
+    expect(text).toContain('mcp_gateway_upstream_up{server="woocommerce"} 1');
+    expect(text).toContain('mcp_gateway_upstream_up{server="dead"} 0');
   });
 
   it("lists only reachable tools, quickly, despite a dead and a hanging upstream", async () => {

@@ -50,6 +50,30 @@ gateway:
   port: 8080
   healthIntervalMs: 15000
   listTimeoutMs: 5000
+  # What a member may use when no permission rule matches: "readOnly" = only
+  # tools the upstream marks readOnlyHint (admins Allow the rest, per user or
+  # for all members), "allowAll" = everything until a Deny rule says otherwise.
+  memberDefault: readOnly
+  # Prometheus metrics at GET /metrics on the app port. Never on the Ingress;
+  # allow a scraper in with global.networkPolicy.metricsScrape.
+  # Search-then-execute: expose only search_tools + call_tool, so a client with
+  # hundreds of tools doesn't fill its context. off | on | auto (meta-tools only
+  # once a caller can see more than autoThreshold tools). MCP clients can
+  # override per request with /mcp?mode=search|full. chatMode is the same
+  # choice for the dashboard's chat agent.
+  search:
+    mode: "off"
+    chatMode: "off"
+    autoThreshold: 50
+  metrics:
+    enabled: true
+    # Needs the Prometheus Operator CRDs (monitoring.coreos.com/v1); skipped
+    # with a notice in the render if they are missing.
+    serviceMonitor:
+      enabled: false
+      interval: 30s
+      # Extra labels, e.g. the "release: kube-prometheus-stack" your Prometheus selects on.
+      labels: {}
   chat:
     # Free-tier quotas: Flash models ~20 requests/day, Flash Lite ~500/day;
     # each chat turn costs one request per model step.

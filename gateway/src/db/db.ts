@@ -6,6 +6,8 @@ import * as m002 from "./migrations/002_dashboard_auth.js";
 import * as m003 from "./migrations/003_tool_permissions.js";
 import * as m004 from "./migrations/004_credential_flag.js";
 import * as m005 from "./migrations/005_drop_credential_ciphertext.js";
+import * as m006 from "./migrations/006_audit_request_id.js";
+import * as m007 from "./migrations/007_audit_detail.js";
 import type { Database } from "./schema.js";
 
 export type Db = Kysely<Database>;
@@ -18,6 +20,8 @@ const migrations: Record<string, Migration> = {
   "003_tool_permissions": m003,
   "004_credential_flag": m004,
   "005_drop_credential_ciphertext": m005,
+  "006_audit_request_id": m006,
+  "007_audit_detail": m007,
 };
 
 export function createDb(connectionString: string, max = 10): Db {

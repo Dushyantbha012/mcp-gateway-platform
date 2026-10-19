@@ -5,7 +5,9 @@ import type { Db } from "../db/db.js";
 import type { AuditOutcome, AuditSource, McpServer } from "../db/schema.js";
 import { rulesFor } from "../db/permissions.js";
 import { listServers, recordServerHealth } from "../db/servers.js";
-import { isAllowed } from "../permissions/evaluate.js";
+import { noopMetrics, type Metrics } from "../metrics/metrics.js";
+import { isAllowed, type MemberDefault } from "../permissions/evaluate.js";
+import { currentRequestId } from "../requestContext.js";
 import { UpstreamError } from "./connection.js";
 import { buildToolIndex, slugOf, type ToolIndex } from "./naming.js";
 import type { UpstreamRegistry } from "./registry.js";
@@ -13,6 +15,10 @@ import type { UpstreamRegistry } from "./registry.js";
 export interface CallContext {
   principal: Principal;
   source: AuditSource;
+  /** Request that triggered the call; defaults to the one in the async context. */
+  requestId?: string;
+  /** Replaces the "call tools/list" advice in the unknown-tool message. */
+  unknownToolHint?: string;
 }
 
 const errorResult = (text: string): CallToolResult => ({
@@ -35,6 +41,9 @@ export class ToolRouter {
   constructor(
     private readonly db: Db,
     private readonly registry: UpstreamRegistry,
+    private readonly metrics: Metrics = noopMetrics,
+    /** What members may use when no rule matches; see `decide`. */
+    readonly memberDefault: MemberDefault = "allowAll",
   ) {}
 
   /**
@@ -52,8 +61,33 @@ export class ToolRouter {
       const route = index.routes.get(t.name);
       return (
         route !== undefined &&
-        isAllowed(principal, { serverSlug: route.slug, toolName: route.upstreamName }, rules)
+        isAllowed(
+          principal,
+          { serverSlug: route.slug, toolName: route.upstreamName, readOnly: route.readOnly },
+          rules,
+          this.memberDefault,
+        )
       );
+    });
+  }
+
+  /**
+   * Audits a gateway-level call that never reaches an upstream (today: the
+   * `search_tools` meta-tool), so it shows in the same log as everything else.
+   */
+  async auditGatewayCall(
+    ctx: CallContext,
+    entry: { toolName: string; durationMs: number; detail?: string },
+  ): Promise<void> {
+    await writeAudit(this.db, {
+      principal: ctx.principal,
+      source: ctx.source,
+      serverSlug: null,
+      toolName: entry.toolName,
+      durationMs: entry.durationMs,
+      outcome: "success",
+      detail: entry.detail,
+      requestId: ctx.requestId ?? currentRequestId(),
     });
   }
 
@@ -77,14 +111,23 @@ export class ToolRouter {
       serverSlug: string | null,
       error?: string,
     ) => {
+      const durationMs = performance.now() - startedAt;
+      this.metrics.observeToolCall({
+        server: serverSlug,
+        tool: route?.upstreamName ?? null,
+        source: ctx.source,
+        outcome,
+        durationMs,
+      });
       await writeAudit(this.db, {
         principal: ctx.principal,
         source: ctx.source,
         serverSlug,
         toolName: name,
-        durationMs: performance.now() - startedAt,
+        durationMs,
         outcome,
         error,
+        requestId: ctx.requestId ?? currentRequestId(),
       });
       return result;
     };
@@ -95,7 +138,7 @@ export class ToolRouter {
       const message =
         known && !known.enabled
           ? `Server '${known.slug}' is disabled`
-          : `Unknown tool '${name}'. Call tools/list to see available tools.`;
+          : `Unknown tool '${name}'. ${ctx.unknownToolHint ?? "Call tools/list to see available tools."}`;
       return finish("rejected", errorResult(message), known?.slug ?? null, message);
     }
 
@@ -104,7 +147,12 @@ export class ToolRouter {
     if (ctx.principal.role !== "admin") {
       const rules = await rulesFor(this.db, ctx.principal);
       if (
-        !isAllowed(ctx.principal, { serverSlug: route.slug, toolName: route.upstreamName }, rules)
+        !isAllowed(
+          ctx.principal,
+          { serverSlug: route.slug, toolName: route.upstreamName, readOnly: route.readOnly },
+          rules,
+          this.memberDefault,
+        )
       ) {
         const message = `You don't have permission to use '${name}'`;
         return finish("denied", errorResult(message), server.slug, message);

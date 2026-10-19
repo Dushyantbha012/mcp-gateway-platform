@@ -4,7 +4,7 @@ import { principalOf } from "../auth/middleware.js";
 import { FailureLimiter } from "../auth/rateLimit.js";
 import { runAgent, type AgentLimits } from "../chat/agent.js";
 import type { LlmClient } from "../chat/types.js";
-import type { ToolRouter } from "../upstreams/router.js";
+import type { ToolSurface, SearchMode } from "../search/surface.js";
 import { log } from "../logger.js";
 import { HttpError, parse } from "./errors.js";
 
@@ -13,6 +13,9 @@ export interface ChatSetup {
   limits?: Partial<AgentLimits>;
   /** Turns one user may start per minute: each turn costs several LLM requests. */
   turnsPerMinute: number;
+  /** Whether the model gets every tool or search_tools + call_tool; default off. */
+  searchMode?: SearchMode;
+  searchAutoThreshold?: number;
   now?: () => Date;
 }
 
@@ -34,11 +37,11 @@ const HEARTBEAT_MS = 15_000;
 /**
  * POST /api/chat: one chat turn as a Server-Sent Events stream. The caller
  * is whoever authenticated the request (session cookie or API key), and the
- * agent's tool calls go through the same ToolRouter as MCP clients, as that
+ * agent's tool calls go through the same ToolRouter as MCP clients (via a ToolSurface, which may swap the tool list for search_tools + call_tool), as that
  * user - so they're routed, time-limited and audited identically
  * (`source = chat`).
  */
-export function chatApi(router: ToolRouter, setup: ChatSetup | undefined) {
+export function chatApi(tools: ToolSurface, setup: ChatSetup | undefined) {
   const api = express.Router();
   // Counted per user and per pod (like the login limiter): enough to stop one
   // member burning the shared free-tier quota.
@@ -79,8 +82,8 @@ export function chatApi(router: ToolRouter, setup: ChatSetup | undefined) {
           llm: setup.llm,
           limits: setup.limits,
           now: setup.now,
-          listTools: () => router.listTools(principal),
-          callTool: (name, args) => router.callTool({ principal, source: "chat" }, name, args),
+          listTools: () => tools.listTools(principal),
+          callTool: (name, args) => tools.callTool({ principal, source: "chat" }, name, args),
         },
         gone.signal,
       );

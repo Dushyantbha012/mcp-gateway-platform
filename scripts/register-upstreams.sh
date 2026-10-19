@@ -71,6 +71,13 @@ else
   echo "github: skipped - set GITHUB_MCP_TOKEN or create ~/.config/urumi/github.env"
 fi
 
+# Members are read-only by default (only tools with readOnlyHint), and DeepWiki's
+# three tools carry no hint although they only read documentation. Allow the
+# server for every member; idempotent (PUT changes the existing rule).
+api PUT /permissions -d '{"role":"member","serverSlug":"deepwiki","toolName":null,"effect":"allow"}' |
+  check "allow deepwiki for members" 200
+echo "deepwiki: allowed for members (its tools carry no readOnlyHint)"
+
 echo "Waiting for the health check to connect them..."
 for _ in $(seq 1 40); do
   api GET /servers | sed '$d' | python3 -c '

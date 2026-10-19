@@ -12,6 +12,9 @@ export interface AuditRecord {
   durationMs: number;
   outcome: AuditOutcome;
   error?: string;
+  requestId?: string;
+  /** Non-error context shown next to the tool, e.g. a search query. */
+  detail?: string;
 }
 
 /**
@@ -32,6 +35,8 @@ export async function writeAudit(db: Db, record: AuditRecord): Promise<void> {
       duration_ms: Math.round(record.durationMs),
       outcome: record.outcome,
       error: record.error?.slice(0, 1000) ?? null,
+      request_id: record.requestId ?? null,
+      detail: record.detail?.slice(0, 500) ?? null,
     });
   } catch (err) {
     log("error", "audit write failed", {

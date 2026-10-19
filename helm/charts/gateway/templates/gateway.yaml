@@ -67,6 +67,16 @@ spec:
               value: {{ printf "postgres://%s:$(DB_PASSWORD)@%s-postgres:5432/%s" .Values.postgres.user $name .Values.postgres.database | quote }}
             - name: HEALTH_INTERVAL_MS
               value: {{ .Values.gateway.healthIntervalMs | quote }}
+            - name: METRICS_ENABLED
+              value: {{ .Values.gateway.metrics.enabled | quote }}
+            - name: MEMBER_DEFAULT_POLICY
+              value: {{ .Values.gateway.memberDefault | quote }}
+            - name: SEARCH_MODE
+              value: {{ .Values.gateway.search.mode | quote }}
+            - name: CHAT_SEARCH_MODE
+              value: {{ .Values.gateway.search.chatMode | quote }}
+            - name: SEARCH_AUTO_THRESHOLD
+              value: {{ .Values.gateway.search.autoThreshold | quote }}
             - name: UPSTREAM_SECRETS_NAMESPACE
               value: {{ .Values.upstreamSecrets.namespace | quote }}
             - name: SSRF_ALLOWED_HOSTS
@@ -194,3 +204,28 @@ spec:
                 port:
                   name: http
           {{- end }}
+{{- if and .Values.gateway.metrics.enabled .Values.gateway.metrics.serviceMonitor.enabled }}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- with .Values.gateway.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "gateway.selector" (list . "gateway") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.gateway.metrics.serviceMonitor.interval }}
+{{- else }}
+# gateway.metrics.serviceMonitor.enabled is set but the cluster has no
+# monitoring.coreos.com/v1 API (Prometheus Operator), so no ServiceMonitor is rendered.
+{{- end }}
+{{- end }}

@@ -64,10 +64,12 @@ describe("buildToolIndex", () => {
     expect(index.routes.get("store-a__list_products")).toEqual({
       slug: "store-a",
       upstreamName: "list_products",
+      readOnly: false,
     });
     expect(index.routes.get("store-b__list_products")).toEqual({
       slug: "store-b",
       upstreamName: "list_products",
+      readOnly: false,
     });
   });
 
@@ -88,5 +90,24 @@ describe("buildToolIndex", () => {
     const names = index.tools.map((t) => t.name);
     expect(new Set(names).size).toBe(2);
     expect(names.map((n) => index.routes.get(n)!.upstreamName).sort()).toEqual(["a.b", "a_b"]);
+  });
+});
+
+describe("buildToolIndex readOnly", () => {
+  it("copies the upstream's readOnlyHint into the route", () => {
+    const index = buildToolIndex([
+      {
+        slug: "shop",
+        name: "Shop",
+        tools: [
+          { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+          { name: "write", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+          { name: "unhinted", inputSchema: { type: "object" } },
+        ],
+      },
+    ]);
+    expect(index.routes.get("shop__read")?.readOnly).toBe(true);
+    expect(index.routes.get("shop__write")?.readOnly).toBe(false);
+    expect(index.routes.get("shop__unhinted")?.readOnly).toBe(false);
   });
 });

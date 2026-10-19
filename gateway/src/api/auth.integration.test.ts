@@ -178,10 +178,16 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
       expect((await member.as.get("/api/servers")).status).toBe(200);
       expect((await member.as.get("/api/users")).status).toBe(403);
       expect((await member.as.get("/api/audit")).status).toBe(403);
+      expect((await member.as.get("/api/stats")).status).toBe(403);
       expect((await member.as.post("/api/servers", {})).status).toBe(403);
 
       const admin = await loggedIn("admin");
       expect((await admin.as.get("/api/users")).status).toBe(200);
+      const stats = await admin.as.get("/api/stats?range=7d");
+      expect(stats.status).toBe(200);
+      expect(stats.body).toMatchObject({ range: "7d", bucket: "day" });
+      expect(stats.body.totals.total).toEqual(expect.any(Number));
+      expect((await admin.as.get("/api/stats?range=1y")).status).toBe(400);
     });
 
     it("are not accepted by /mcp (MCP clients use API keys)", async () => {
@@ -525,6 +531,7 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
       expect((await member.as.get("/api/meta")).body).toEqual({
         mcpUrl: "http://gateway.test/mcp",
         chatEnabled: false,
+        searchMode: "off",
       });
     });
   });

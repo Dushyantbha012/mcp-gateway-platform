@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { generateApiKey } from "../crypto/apiKeys.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 import { insertApiKey, findPrincipalByKeyHash, revokeApiKey, touchApiKey } from "./apiKeys.js";
-import { insertAuditEntry, queryAudit } from "./audit.js";
+import { auditStats, insertAuditEntry, queryAudit } from "./audit.js";
 import { createDb, migrate, waitForDatabase } from "./db.js";
 import {
   insertServer,
@@ -41,6 +41,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "003_tool_permissions",
       "004_credential_flag",
       "005_drop_credential_ciphertext",
+      "006_audit_request_id",
+      "007_audit_detail",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -71,6 +73,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "003_tool_permissions",
       "004_credential_flag",
       "005_drop_credential_ciphertext",
+      "006_audit_request_id",
+      "007_audit_detail",
     ]);
   });
 });
@@ -209,5 +213,35 @@ describe.skipIf(!hasTestDb)("schema constraints and repositories", () => {
 
     const page = await queryAudit(t.db, { beforeId: mine[0].id, limit: 1 });
     expect(page.map((e) => e.tool_name)).toEqual(["two"]);
+  });
+  it("aggregates audit stats: totals, error rate inputs, series and top tools", async () => {
+    const base = {
+      user_id: null,
+      user_email: "stats@example.com",
+      api_key_id: null,
+      source: "mcp" as const,
+      error: null,
+    };
+    const rows = [
+      { server_slug: "stats-a", tool_name: "alpha", duration_ms: 10, outcome: "success" as const },
+      { server_slug: "stats-a", tool_name: "alpha", duration_ms: 30, outcome: "success" as const },
+      { server_slug: "stats-b", tool_name: "beta", duration_ms: 50, outcome: "timeout" as const },
+      { server_slug: "stats-b", tool_name: "beta", duration_ms: 20, outcome: "denied" as const },
+    ];
+    for (const r of rows) await insertAuditEntry(t.db, { ...base, ...r });
+
+    const now = Date.now();
+    const stats = await auditStats(t.db, {
+      since: new Date(now - 3_600_000),
+      previousSince: new Date(now - 2 * 3_600_000),
+      bucket: "hour",
+    });
+    const mineTools = stats.topTools.filter((x) => x.server?.startsWith("stats-"));
+    expect(mineTools.find((x) => x.tool === "alpha")?.count).toBe(2);
+    // denied is policy working as intended, so only the timeout counts as an error
+    expect(stats.totals.errors).toBeGreaterThanOrEqual(1);
+    expect(stats.byOutcome.find((o) => o.outcome === "timeout")?.count).toBeGreaterThanOrEqual(1);
+    expect(stats.series.reduce((n, p) => n + p.success + p.errors, 0)).toBeGreaterThanOrEqual(3);
+    expect(stats.previous.total).toBe(0);
   });
 });

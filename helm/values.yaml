@@ -17,6 +17,13 @@ global:
       namespace: kube-system
       podLabels:
         app.kubernetes.io/name: traefik
+    # Lets a Prometheus in another namespace scrape the gateway's /metrics
+    # (port 8080). Off by default: only the ingress controller reaches the gateway.
+    metricsScrape:
+      enabled: false
+      namespace: monitoring
+      podLabels:
+        app.kubernetes.io/name: prometheus
     # Where the gateway reaches the Kubernetes API (to manage upstream
     # Secrets). The node's IP on k3s: set per environment, e.g. "172.18.0.3/32".
     # Empty = no API egress rule.

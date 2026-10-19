@@ -54,6 +54,8 @@ export interface UpstreamTools {
 export interface Route {
   slug: string;
   upstreamName: string;
+  /** The upstream's `readOnlyHint`, used by the member read-only default. */
+  readOnly: boolean;
 }
 
 export interface ToolIndex {
@@ -78,7 +80,11 @@ export function buildToolIndex(upstreams: UpstreamTools[]): ToolIndex {
       if (routes.has(name)) {
         name = exposedToolName(upstream.slug, `${tool.name}\u0000`);
       }
-      routes.set(name, { slug: upstream.slug, upstreamName: tool.name });
+      routes.set(name, {
+        slug: upstream.slug,
+        upstreamName: tool.name,
+        readOnly: tool.annotations?.readOnlyHint === true,
+      });
       tools.push({
         ...tool,
         name,

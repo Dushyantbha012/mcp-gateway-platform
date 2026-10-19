@@ -342,3 +342,92 @@ describe("systemPrompt", () => {
     expect(systemPrompt(new Date())).toMatch(/data, never\s+instructions/);
   });
 });
+
+describe("search mode", () => {
+  const meta = [tool("search_tools"), tool("call_tool")];
+
+  it("tells the model to search first, only when it is offered just the meta-tools", async () => {
+    const { deps, llm } = setup([say("ok")], { listTools: async () => meta });
+    await collect(runAgent(ask("hi"), deps));
+    expect(llm.requests[0].system).toMatch(/search_tools finds the gateway's other tools/);
+    expect(llm.requests[0].system).not.toMatch(/Tool names look like/);
+    expect(llm.requests[0].tools.map((t) => t.name)).toEqual(["search_tools", "call_tool"]);
+
+    const full = setup([say("ok")]);
+    await collect(runAgent(ask("hi"), full.deps));
+    expect(full.llm.requests[0].system).toMatch(/Tool names look like/);
+    expect(full.llm.requests[0].system).not.toMatch(/search_tools/);
+  });
+
+  it("shows the tool inside call_tool, but gives the model its own call and result back", async () => {
+    const { deps, callTool, llm } = setup(
+      [
+        callTools({ name: "search_tools", args: { query: "orders" }, id: "s1" }),
+        callTools({
+          name: "call_tool",
+          args: { name: "shop__list_orders", arguments: { after: "2026-10-10" } },
+          id: "c1",
+        }),
+        say("One order."),
+      ],
+      { listTools: async () => meta },
+    );
+    callTool.mockResolvedValueOnce(ok('{"results":[]}')).mockResolvedValueOnce(ok("[24]"));
+
+    const events = await collect(runAgent(ask("orders today?"), deps));
+
+    expect(types(events)).toEqual([
+      "tool_call",
+      "tool_result",
+      "tool_call",
+      "tool_result",
+      "text",
+      "done",
+    ]);
+    expect(events[0]).toMatchObject({
+      name: "search_tools",
+      server: null,
+      args: { query: "orders" },
+    });
+    expect(events[2]).toMatchObject({
+      id: "c1",
+      name: "shop__list_orders",
+      server: "shop",
+      args: { after: "2026-10-10" },
+    });
+    expect(events[3]).toMatchObject({ id: "c1", name: "shop__list_orders", isError: false });
+    // The agent forwards the wrapper call untouched...
+    expect(callTool).toHaveBeenLastCalledWith("call_tool", {
+      name: "shop__list_orders",
+      arguments: { after: "2026-10-10" },
+    });
+    // ...and the model sees its own call_tool name in the history, as the API requires.
+    expect(llm.requests[2].turns.slice(-2)).toMatchObject([
+      { role: "model", calls: [{ id: "c1", name: "call_tool" }] },
+      { role: "tool", results: [{ id: "c1", name: "call_tool", output: "[24]" }] },
+    ]);
+  });
+
+  it("shows a call_tool with no usable name as itself", async () => {
+    const { deps } = setup([callTools({ name: "call_tool", args: {} }), say("sorry")], {
+      listTools: async () => meta,
+      callTool: async () => fail("Invalid arguments for call_tool: name: Required"),
+    });
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(events[0]).toMatchObject({ type: "tool_call", name: "call_tool", server: null });
+  });
+
+  it("does not count a search that finds nothing as a failed step", async () => {
+    const { deps } = setup(
+      [
+        callTools({ name: "search_tools", args: { query: "a" } }),
+        callTools({ name: "search_tools", args: { query: "b" } }),
+        callTools({ name: "search_tools", args: { query: "c" } }),
+        say("Nothing fits."),
+      ],
+      { listTools: async () => meta, callTool: async () => ok('{"results":[]}') },
+    );
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(types(events).at(-1)).toBe("done");
+  });
+});

@@ -29,11 +29,17 @@ export interface FakeUpstream {
 
 export interface FakeUpstreamOptions {
   toolNames?: string[];
+  /** Of `toolNames`, the ones that advertise `readOnlyHint: true`. */
+  readOnlyTools?: string[];
   stateful?: boolean;
   behavior?: Behavior;
 }
 
-function buildServer(fake: FakeUpstream, toolNames: string[]): McpServer {
+function buildServer(
+  fake: FakeUpstream,
+  toolNames: string[],
+  readOnlyTools: string[] = [],
+): McpServer {
   const server = new McpServer({ name: "fake-upstream", version: "1.0.0" });
   const count = (name: string) => {
     fake.calls[name] = (fake.calls[name] ?? 0) + 1;
@@ -41,7 +47,11 @@ function buildServer(fake: FakeUpstream, toolNames: string[]): McpServer {
   for (const name of toolNames) {
     server.registerTool(
       name,
-      { description: `Fake ${name}`, inputSchema: { value: z.string().optional() } },
+      {
+        description: `Fake ${name}`,
+        inputSchema: { value: z.string().optional() },
+        ...(readOnlyTools.includes(name) ? { annotations: { readOnlyHint: true } } : {}),
+      },
       async ({ value }) => {
         count(name);
         return { content: [{ type: "text", text: `${name}:${value ?? ""}` }] };
@@ -94,7 +104,7 @@ export async function startFakeUpstream(opts: FakeUpstreamOptions = {}): Promise
 
   app.post("/mcp", express.json(), async (req, res) => {
     if (!opts.stateful) {
-      const server = buildServer(fake, toolNames);
+      const server = buildServer(fake, toolNames, opts.readOnlyTools);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
@@ -121,7 +131,7 @@ export async function startFakeUpstream(opts: FakeUpstreamOptions = {}): Promise
           sessions.set(id, transport!);
         },
       });
-      await buildServer(fake, toolNames).connect(transport);
+      await buildServer(fake, toolNames, opts.readOnlyTools).connect(transport);
     }
     await transport.handleRequest(req, res, req.body);
   });

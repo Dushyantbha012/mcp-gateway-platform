@@ -111,3 +111,42 @@ describe("decide", () => {
     expect(d).toEqual({ allowed: false, reason: "rule", rule });
   });
 });
+
+describe("decide with the read-only member default", () => {
+  const writeTool = { ...update, readOnly: false };
+  const readTool = { ...list, readOnly: true };
+  const ro = "readOnly" as const;
+
+  it("lets a member use read-only tools but not tools that change things", () => {
+    expect(decide(member, readTool, [], ro)).toEqual({ allowed: true, reason: "default" });
+    expect(decide(member, writeTool, [], ro)).toEqual({
+      allowed: false,
+      reason: "read-only-default",
+    });
+  });
+
+  it("treats a tool with no hint as a write tool", () => {
+    expect(isAllowed(member, update, [], ro)).toBe(false);
+  });
+
+  it("an Allow rule grants a write tool, for everyone or for one user", () => {
+    expect(isAllowed(member, writeTool, [role("allow", "update_order_status")], ro)).toBe(true);
+    expect(isAllowed(member, writeTool, [role("allow", null)], ro)).toBe(true);
+    expect(isAllowed(member, writeTool, [user("allow", "update_order_status")], ro)).toBe(true);
+    expect(isAllowed(otherMember, writeTool, [user("allow", "update_order_status")], ro)).toBe(
+      false,
+    );
+  });
+
+  it("a Deny rule still hides a read-only tool", () => {
+    expect(isAllowed(member, readTool, [role("deny", "list_orders")], ro)).toBe(false);
+  });
+
+  it("admins are never restricted", () => {
+    expect(isAllowed(admin, writeTool, [], ro)).toBe(true);
+  });
+
+  it("allowAll keeps the old behaviour", () => {
+    expect(isAllowed(member, writeTool, [], "allowAll")).toBe(true);
+  });
+});

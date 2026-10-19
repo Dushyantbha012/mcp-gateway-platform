@@ -91,6 +91,67 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, COOKIE_SECURE: value }).auth.cookieSecure).toBe(expected);
   });
 
+  it.each([
+    [undefined, true],
+    ["", true],
+    ["true", true],
+    ["false", false],
+  ])("METRICS_ENABLED=%j -> %s", (value, expected) => {
+    expect(loadConfig({ ...base, METRICS_ENABLED: value }).metricsEnabled).toBe(expected);
+  });
+
+  it("rejects a non-boolean METRICS_ENABLED", () => {
+    expect(() => loadConfig({ ...base, METRICS_ENABLED: "yes" })).toThrow(/METRICS_ENABLED/);
+  });
+
+  it.each([
+    [undefined, "off"],
+    ["", "off"],
+    ["off", "off"],
+    ["on", "on"],
+    ["auto", "auto"],
+  ])("SEARCH_MODE=%j -> %s", (value, expected) => {
+    expect(loadConfig({ ...base, SEARCH_MODE: value }).searchMode).toBe(expected);
+  });
+
+  it.each([
+    [undefined, "readOnly"],
+    ["", "readOnly"],
+    ["readOnly", "readOnly"],
+    ["allowAll", "allowAll"],
+  ])("MEMBER_DEFAULT_POLICY=%j -> %s", (value, expected) => {
+    expect(loadConfig({ ...base, MEMBER_DEFAULT_POLICY: value }).memberDefault).toBe(expected);
+  });
+
+  it("rejects an unknown member default", () => {
+    expect(() => loadConfig({ ...base, MEMBER_DEFAULT_POLICY: "everything" })).toThrow(
+      /MEMBER_DEFAULT_POLICY/,
+    );
+  });
+
+  it("reads the auto threshold and the chat's own search mode", () => {
+    const config = loadConfig({
+      ...base,
+      SEARCH_MODE: "auto",
+      SEARCH_AUTO_THRESHOLD: "120",
+      GEMINI_API_KEY: "k",
+      CHAT_SEARCH_MODE: "on",
+    });
+    expect(config.searchMode).toBe("auto");
+    expect(config.searchAutoThreshold).toBe(120);
+    expect(config.chat?.searchMode).toBe("on");
+    expect(loadConfig({ ...base, GEMINI_API_KEY: "k" }).chat?.searchMode).toBe("off");
+    expect(loadConfig(base).searchAutoThreshold).toBe(50);
+  });
+
+  it.each([
+    ["SEARCH_MODE", "always"],
+    ["CHAT_SEARCH_MODE", "yes"],
+    ["SEARCH_AUTO_THRESHOLD", "0"],
+  ])("rejects a bad %s", (key, value) => {
+    expect(() => loadConfig({ ...base, [key]: value })).toThrow(new RegExp(key));
+  });
+
   it("rejects a non-boolean COOKIE_SECURE and bad dashboard URLs", () => {
     expect(() => loadConfig({ ...base, COOKIE_SECURE: "yes" })).toThrow(/COOKIE_SECURE/);
     expect(() => loadConfig({ ...base, DASHBOARD_URL: "javascript:alert(1)" })).toThrow(

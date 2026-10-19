@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import express from "express";
 import { auditApi } from "./api/audit.js";
+import { statsApi } from "./api/stats.js";
 import { chatApi, type ChatSetup } from "./api/chat.js";
 import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
@@ -12,6 +13,9 @@ import type { Config } from "./config.js";
 import type { CredentialStore } from "./credentials/store.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
+import type { GatewayMetrics } from "./metrics/metrics.js";
+import { requestId } from "./requestContext.js";
+import { ToolSurface } from "./search/surface.js";
 import type { SsrfPolicy } from "./security/ssrf.js";
 import type { HealthChecker } from "./upstreams/health.js";
 import type { UpstreamRegistry } from "./upstreams/registry.js";
@@ -28,6 +32,10 @@ export interface AppDeps {
   config: Pick<Config, "auth" | "trustProxyHops">;
   /** The chat agent's model and limits; absent = chat switched off (503). */
   chat?: ChatSetup;
+  /** Prometheus metrics; absent = no /metrics endpoint. */
+  metrics?: GatewayMetrics;
+  /** What MCP clients see of the tools (full list or search-then-execute); default: full list. */
+  tools?: ToolSurface;
 }
 
 export function createApp(deps: AppDeps) {
@@ -37,6 +45,8 @@ export function createApp(deps: AppDeps) {
   // req.ip from X-Forwarded-For set by this many proxies (Traefik), for the
   // login rate limit.
   app.set("trust proxy", deps.config.trustProxyHops);
+  // First, so every log line and audit row from here on carries the ID.
+  app.use(requestId());
 
   // Liveness: the process is up. Readiness: it can reach Postgres, without
   // which it can't authenticate anyone. Neither depends on upstreams - a dead
@@ -53,12 +63,23 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // Unauthenticated like the probes, so Prometheus can scrape it. It is not on
+  // the Ingress; a NetworkPolicy decides who in the cluster may reach it.
+  const { metrics } = deps;
+  const tools =
+    deps.tools ?? new ToolSurface(deps.router, { mode: "off", autoThreshold: 50 }, deps.metrics);
+  if (metrics) {
+    app.get("/metrics", async (_req, res) => {
+      res.type(metrics.contentType).send(await metrics.render());
+    });
+  }
+
   // MCP clients authenticate with API keys only. The session cookie is
   // scoped to /api, and isn't accepted here even if sent.
   app.use(
     "/mcp",
     requireAuth(deps.db, { style: "jsonrpc", allowSession: false }),
-    mcpRouter(deps.router),
+    mcpRouter(tools),
   );
 
   const api = express.Router();
@@ -78,12 +99,22 @@ export function createApp(deps: AppDeps) {
   });
   /** Public settings the dashboard shows, so one dashboard image fits every environment. */
   api.get("/meta", (_req, res) => {
-    res.json({ mcpUrl: auth.publicMcpUrl ?? null, chatEnabled: deps.chat !== undefined });
+    res.json({
+      mcpUrl: auth.publicMcpUrl ?? null,
+      chatEnabled: deps.chat !== undefined,
+      searchMode: tools.mode,
+    });
   });
   api.use("/servers", serversApi(deps));
-  api.use("/permissions", permissionsApi(deps.db));
+  api.use("/permissions", permissionsApi(deps.db, deps.router.memberDefault));
   api.use("/audit", auditApi(deps.db));
-  api.use("/chat", chatApi(deps.router, deps.chat));
+  api.use("/stats", statsApi(deps.db));
+  const chatTools = new ToolSurface(
+    deps.router,
+    { mode: deps.chat?.searchMode ?? "off", autoThreshold: deps.chat?.searchAutoThreshold ?? 50 },
+    deps.metrics,
+  );
+  api.use("/chat", chatApi(chatTools, deps.chat));
   api.use(usersApi(deps.db, auth));
   api.use(() => {
     throw new HttpError(404, "not_found", "No such endpoint");

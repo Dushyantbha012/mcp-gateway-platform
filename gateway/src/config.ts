@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { looksLikeApiKey } from "./crypto/apiKeys.js";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./crypto/passwords.js";
+import type { MemberDefault } from "./permissions/evaluate.js";
+import type { SearchMode } from "./search/surface.js";
 
 const optionalString = z
   .string()
@@ -12,6 +14,22 @@ const envBoolean = z
   .enum(["true", "false", ""])
   .optional()
   .transform((v) => v === "true");
+
+/** Like envBoolean, but on unless explicitly "false". */
+const envBooleanDefaultOn = z
+  .enum(["true", "false", ""])
+  .optional()
+  .transform((v) => v !== "false");
+
+const searchMode = z
+  .enum(["off", "on", "auto", ""])
+  .optional()
+  .transform((v) => (v === undefined || v === "" ? "off" : v));
+
+const memberDefault = z
+  .enum(["readOnly", "allowAll", ""])
+  .optional()
+  .transform((v) => (v === undefined || v === "" ? "readOnly" : v));
 
 const commaList = optionalString.transform((v) =>
   (v ?? "")
@@ -80,6 +98,18 @@ const schema = z
     // Reverse proxies (Traefik) in front of the gateway, for the client IP
     // used by the login rate limit.
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+    // Serve Prometheus metrics at GET /metrics (unauthenticated; keep it off the Ingress).
+    METRICS_ENABLED: envBooleanDefaultOn,
+    // Search-then-execute: expose only search_tools + call_tool instead of
+    // every tool. "auto" does so once a caller can see more than the threshold.
+    // MCP clients can override per request with /mcp?mode=search|full.
+    SEARCH_MODE: searchMode,
+    SEARCH_AUTO_THRESHOLD: z.coerce.number().int().min(1).default(50),
+    // The same choice for the chat agent's model.
+    CHAT_SEARCH_MODE: searchMode,
+    // What members may use when no permission rule matches: only tools the
+    // upstream marks read-only (default), or everything.
+    MEMBER_DEFAULT_POLICY: memberDefault,
   })
   .refine((e) => !!e.BOOTSTRAP_ADMIN_EMAIL === !!e.BOOTSTRAP_ADMIN_API_KEY, {
     message: "set both BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_API_KEY, or neither",
@@ -112,6 +142,7 @@ export interface ChatConfig {
   maxSteps: number;
   turnTimeoutMs: number;
   turnsPerMinute: number;
+  searchMode: SearchMode;
 }
 
 export interface Config {
@@ -121,6 +152,11 @@ export interface Config {
   listTimeoutMs: number;
   maxResultBytes: number;
   trustProxyHops: number;
+  metricsEnabled: boolean;
+  searchMode: SearchMode;
+  memberDefault: MemberDefault;
+  /** With searchMode "auto": meta-tools only above this many visible tools. */
+  searchAutoThreshold: number;
   ssrfAllowedHosts: string[];
   upstreamSecretsNamespace?: string;
   auth: AuthConfig;
@@ -147,6 +183,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     listTimeoutMs: e.LIST_TIMEOUT_MS,
     maxResultBytes: e.MAX_RESULT_BYTES,
     trustProxyHops: e.TRUST_PROXY_HOPS,
+    metricsEnabled: e.METRICS_ENABLED,
+    searchMode: e.SEARCH_MODE,
+    memberDefault: e.MEMBER_DEFAULT_POLICY,
+    searchAutoThreshold: e.SEARCH_AUTO_THRESHOLD,
     ssrfAllowedHosts: e.SSRF_ALLOWED_HOSTS,
     upstreamSecretsNamespace: e.UPSTREAM_SECRETS_NAMESPACE,
     auth: {
@@ -170,6 +210,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
           maxSteps: e.CHAT_MAX_STEPS,
           turnTimeoutMs: e.CHAT_TURN_TIMEOUT_MS,
           turnsPerMinute: e.CHAT_TURNS_PER_MINUTE,
+          searchMode: e.CHAT_SEARCH_MODE,
         }
       : undefined,
     bootstrapAdmin:
