@@ -130,8 +130,10 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
 function UserStatus({ user }: { user: User }) {
   if (user.disabledAt) return <Badge variant="secondary">Disabled</Badge>;
   if (!user.hasPassword)
-    return <Badge className="border-transparent bg-amber-100 text-amber-800">Invite pending</Badge>;
-  return <Badge className="border-transparent bg-emerald-100 text-emerald-800">Active</Badge>;
+    return (
+      <Badge className="border-transparent bg-warning-soft text-warning">Invite pending</Badge>
+    );
+  return <Badge className="border-transparent bg-success-soft text-success">Active</Badge>;
 }
 
 function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
@@ -149,7 +151,7 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
   return (
     <Fragment>
       <TableRow data-testid={`user-${user.email}`}>
-        <TableCell>
+        <TableCell data-label="User">
           <button
             type="button"
             className="flex items-center gap-1 text-left"
@@ -167,7 +169,7 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
             </span>
           </button>
         </TableCell>
-        <TableCell>
+        <TableCell data-label="Role">
           <NativeSelect
             aria-label={`Role of ${user.email}`}
             className="w-28"
@@ -181,11 +183,11 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
             <option value="admin">Admin</option>
           </NativeSelect>
         </TableCell>
-        <TableCell>
+        <TableCell data-label="Status">
           <UserStatus user={user} />
         </TableCell>
-        <TableCell>{timeAgo(user.createdAt)}</TableCell>
-        <TableCell className="space-x-2 text-right whitespace-nowrap">
+        <TableCell data-label="Joined">{timeAgo(user.createdAt)}</TableCell>
+        <TableCell className="flex-wrap justify-end space-x-2 text-right md:whitespace-nowrap">
           {!user.disabledAt && (
             <Button
               variant="outline"
@@ -256,8 +258,8 @@ export function TeamPage() {
         }
       />
       {users.isError && <p role="alert">Couldn't load the team: {errorMessage(users.error)}</p>}
-      <div className="rounded-md border bg-background">
-        <Table>
+      <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
+        <Table className="stack-table">
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>

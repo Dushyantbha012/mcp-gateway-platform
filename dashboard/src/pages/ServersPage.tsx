@@ -1,30 +1,72 @@
-import { ChevronRight, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import {
+  Clock,
+  KeyRound,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Server as ServerIcon,
+  ShieldAlert,
+  Timer,
+  Trash2,
+  Wrench,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
 import { useDeleteServer, useMe, useRefreshServer, useSaveServer, useServers } from "@/api/hooks";
 import type { Server } from "@/api/types";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { ServerFormDialog } from "@/components/ServerFormDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+const DOT: Record<Server["status"], string> = {
+  connected: "bg-success",
+  unreachable: "bg-destructive",
+  unknown: "bg-warning",
+  disabled: "bg-muted-foreground",
+};
+
+function StatusDot({ status }: { status: Server["status"] }) {
+  return (
+    <span className="relative flex size-2.5 shrink-0" aria-hidden>
+      {status === "connected" && (
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
+      )}
+      <span className={cn("relative inline-flex size-2.5 rounded-full", DOT[status])} />
+    </span>
+  );
+}
 
 const AUTH_LABEL = { none: "No auth", bearer: "Bearer token", header: "Custom header" };
 
 function ServerCard({
   server,
   isAdmin,
+  index,
   onEdit,
+  onOpen,
 }: {
   server: Server;
   isAdmin: boolean;
+  index: number;
   onEdit: () => void;
+  onOpen: () => void;
 }) {
   const save = useSaveServer();
   const refresh = useRefreshServer();
@@ -32,54 +74,89 @@ function ServerCard({
   const fail = (err: unknown) => toast.error(errorMessage(err));
 
   return (
-    <Card data-testid={`server-${server.slug}`}>
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-base">
+    <Card
+      data-testid={`server-${server.slug}`}
+      className="group gap-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md animate-in fade-in slide-in-from-bottom-2 fill-mode-both"
+      style={{ animationDelay: `${Math.min(index, 8) * 50}ms` }}
+    >
+      <CardHeader className="gap-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <StatusDot status={server.status} />
+            <CardTitle className="truncate text-base">
               <h2>{server.name}</h2>
             </CardTitle>
-            <StatusBadge status={server.status} reason={server.lastError} />
           </div>
-          <p className="text-xs text-muted-foreground">
-            <code>{server.slug}</code>
-            {server.url && <> · {server.url}</>}
-          </p>
+          <StatusBadge status={server.status} reason={server.lastError} />
         </div>
+        <p className="truncate text-xs text-muted-foreground">
+          <code>{server.slug}</code>
+          {server.url && <> · {server.url}</>}
+        </p>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-3 text-sm">
+        {server.status === "unreachable" && server.lastError && (
+          <p className="flex gap-2 rounded-md bg-danger-soft px-3 py-2 text-xs text-destructive">
+            <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span className="line-clamp-3">{server.lastError}</span>
+          </p>
+        )}
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <KeyRound className="size-3.5" aria-hidden />
+            <dt className="sr-only">Auth</dt>
+            <dd className="truncate">
+              {AUTH_LABEL[server.authType]}
+              {server.hasCredential && " ✓"}
+            </dd>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Timer className="size-3.5" aria-hidden />
+            <dt className="sr-only">Timeout</dt>
+            <dd>{server.timeoutMs} ms</dd>
+          </div>
+          <div className="col-span-2 flex items-center gap-1.5">
+            <Clock className="size-3.5" aria-hidden />
+            <dt className="sr-only">Last check</dt>
+            <dd>Checked {server.enabled ? timeAgo(server.lastCheckedAt) : "-"}</dd>
+          </div>
+        </dl>
+      </CardContent>
+      <CardFooter className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+        <Button variant="secondary" size="sm" onClick={onOpen}>
+          <Wrench /> {server.tools.length} {server.tools.length === 1 ? "tool" : "tools"}
+        </Button>
         {isAdmin && (
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <Switch
-                checked={server.enabled}
-                disabled={save.isPending}
-                aria-label={`${server.name} enabled`}
-                onCheckedChange={(enabled) =>
-                  save.mutate(
-                    { id: server.id, input: { enabled } },
-                    {
-                      onSuccess: () =>
-                        toast.success(`${server.name} ${enabled ? "enabled" : "disabled"}`),
-                      onError: fail,
-                    },
-                  )
-                }
-              />
-              Enabled
-            </label>
+          <div className="flex items-center gap-1">
+            <Switch
+              checked={server.enabled}
+              disabled={save.isPending}
+              aria-label={`${server.name} enabled`}
+              onCheckedChange={(enabled) =>
+                save.mutate(
+                  { id: server.id, input: { enabled } },
+                  {
+                    onSuccess: () =>
+                      toast.success(`${server.name} ${enabled ? "enabled" : "disabled"}`),
+                    onError: fail,
+                  },
+                )
+              }
+            />
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
               disabled={!server.enabled || refresh.isPending}
               onClick={() => refresh.mutate(server.id, { onError: fail })}
               aria-label={`Check ${server.name} now`}
             >
-              <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} /> Check
+              <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
             </Button>
-            <Button variant="outline" size="sm" onClick={onEdit} aria-label={`Edit ${server.name}`}>
-              <Pencil /> Edit
+            <Button variant="ghost" size="icon" onClick={onEdit} aria-label={`Edit ${server.name}`}>
+              <Pencil />
             </Button>
             <ConfirmButton
-              variant="outline"
+              variant="ghost"
               title={`Remove ${server.name}?`}
               description={
                 <>
@@ -95,60 +172,79 @@ function ServerCard({
                 })
               }
             >
-              <Trash2 /> Remove
+              <Trash2 /> <span className="sr-only">Remove</span>
             </ConfirmButton>
           </div>
         )}
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        {server.status === "unreachable" && server.lastError && (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-red-800">{server.lastError}</p>
-        )}
-        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
-          <div>
-            <dt className="inline">Auth: </dt>
-            <dd className="inline">
-              {AUTH_LABEL[server.authType]}
-              {server.authType === "header" &&
-                server.authHeaderName &&
-                ` (${server.authHeaderName})`}
-              {server.hasCredential && " · credential stored"}
-            </dd>
-          </div>
-          <div>
-            <dt className="inline">Timeout: </dt>
-            <dd className="inline">{server.timeoutMs} ms</dd>
-          </div>
-          <div>
-            <dt className="inline">Last check: </dt>
-            <dd className="inline">{server.enabled ? timeAgo(server.lastCheckedAt) : "-"}</dd>
-          </div>
-        </dl>
-        <Collapsible>
-          <CollapsibleTrigger className="group flex items-center gap-1 text-sm font-medium">
-            <ChevronRight className="size-4 transition-transform group-data-[state=open]:rotate-90" />
-            {server.tools.length} {server.tools.length === 1 ? "tool" : "tools"}
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <ul className="mt-2 divide-y rounded-md border">
-              {server.tools.map((tool) => (
-                <li key={tool.name} className="px-3 py-2">
-                  <code className="text-xs font-medium">{tool.name}</code>
-                  {tool.description && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{tool.description}</p>
-                  )}
-                </li>
-              ))}
-              {server.tools.length === 0 && (
-                <li className="px-3 py-2 text-xs text-muted-foreground">
-                  No tools known yet - they're listed after the first successful check.
-                </li>
-              )}
-            </ul>
-          </CollapsibleContent>
-        </Collapsible>
-      </CardContent>
+      </CardFooter>
     </Card>
+  );
+}
+
+function ServerDrawer({ server, onClose }: { server: Server | undefined; onClose: () => void }) {
+  return (
+    <Sheet open={server !== undefined} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+        {server && (
+          <>
+            <SheetHeader>
+              <div className="flex items-center gap-2">
+                <StatusDot status={server.status} />
+                <SheetTitle>{server.name}</SheetTitle>
+              </div>
+              <SheetDescription>
+                <code>{server.slug}</code>
+                {server.url && <> · {server.url}</>}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="space-y-4 px-4 pb-6 text-sm">
+              <StatusBadge status={server.status} reason={server.lastError} />
+              {server.lastError && (
+                <p className="rounded-md bg-danger-soft px-3 py-2 text-destructive">
+                  {server.lastError}
+                </p>
+              )}
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-muted-foreground">
+                <dt>Auth</dt>
+                <dd className="text-foreground">
+                  {AUTH_LABEL[server.authType]}
+                  {server.authType === "header" &&
+                    server.authHeaderName &&
+                    ` (${server.authHeaderName})`}
+                  {server.hasCredential && " · credential stored"}
+                </dd>
+                <dt>Timeout</dt>
+                <dd className="text-foreground">{server.timeoutMs} ms</dd>
+                <dt>Last check</dt>
+                <dd className="text-foreground">
+                  {server.enabled ? timeAgo(server.lastCheckedAt) : "-"}
+                </dd>
+              </dl>
+              <div>
+                <h3 className="mb-2 font-medium">
+                  {server.tools.length} {server.tools.length === 1 ? "tool" : "tools"}
+                </h3>
+                <ul className="divide-y rounded-lg border">
+                  {server.tools.map((tool) => (
+                    <li key={tool.name} className="px-3 py-2">
+                      <code className="text-xs font-medium">{tool.name}</code>
+                      {tool.description && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">{tool.description}</p>
+                      )}
+                    </li>
+                  ))}
+                  {server.tools.length === 0 && (
+                    <li className="px-3 py-2 text-xs text-muted-foreground">
+                      No tools known yet - they're listed after the first successful check.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -158,6 +254,13 @@ export function ServersPage() {
   const isAdmin = me?.role === "admin";
   // undefined = closed, null = adding, a server = editing it
   const [editing, setEditing] = useState<Server | null | undefined>(undefined);
+  const [openId, setOpenId] = useState<string | undefined>(undefined);
+  const location = useLocation();
+  const requested = (location.state as { open?: string } | null)?.open;
+  useEffect(() => {
+    if (requested) setOpenId(requested);
+  }, [requested]);
+  const opened = servers.data?.find((s) => s.id === openId);
 
   return (
     <>
@@ -172,21 +275,38 @@ export function ServersPage() {
           )
         }
       />
-      {servers.isPending && <Skeleton className="h-32 w-full" />}
+      {servers.isPending && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-52 w-full rounded-xl" />
+          ))}
+        </div>
+      )}
       {servers.isError && <p role="alert">Couldn't load servers: {errorMessage(servers.error)}</p>}
-      <div className="space-y-4">
-        {servers.data?.map((server) => (
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {servers.data?.map((server, i) => (
           <ServerCard
             key={server.id}
             server={server}
             isAdmin={isAdmin}
+            index={i}
             onEdit={() => setEditing(server)}
+            onOpen={() => setOpenId(server.id)}
           />
         ))}
-        {servers.data?.length === 0 && (
-          <p className="text-sm text-muted-foreground">No MCP servers registered yet.</p>
-        )}
       </div>
+      {servers.data?.length === 0 && (
+        <EmptyState
+          icon={ServerIcon}
+          title="No MCP servers registered yet."
+          description={
+            isAdmin
+              ? "Use “Add server” above to expose its tools through the gateway."
+              : "Ask an admin to register a server."
+          }
+        />
+      )}
+      <ServerDrawer server={opened} onClose={() => setOpenId(undefined)} />
       {editing !== undefined && (
         <ServerFormDialog server={editing ?? undefined} onClose={() => setEditing(undefined)} />
       )}

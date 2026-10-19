@@ -99,6 +99,10 @@ export interface AuditEntry {
   durationMs: number;
   outcome: AuditOutcome;
   error: string | null;
+  /** The X-Request-ID of the request that made the call; null for older rows. */
+  requestId: string | null;
+  /** Non-error context, e.g. the query of a search_tools call. */
+  detail?: string | null;
 }
 
 export interface AuditFilters {
@@ -106,11 +110,14 @@ export interface AuditFilters {
   server?: string;
   outcome?: AuditOutcome;
   source?: AuditSource;
+  requestId?: string;
 }
 
 export interface Meta {
   mcpUrl: string | null;
   chatEnabled: boolean;
+  /** How MCP clients get tools by default: all of them, or search_tools + call_tool. */
+  searchMode?: "off" | "on" | "auto";
 }
 
 /** One message sent to the chat endpoint; history lives in the browser. */
@@ -157,6 +164,20 @@ export interface EffectiveTool {
   serverSlug: string;
   toolName: string;
   allowed: boolean;
-  reason: "admin" | "default" | "rule";
+  reason: "admin" | "default" | "rule" | "read-only-default";
   rule?: { subjectType: "role" | "user"; toolName: string | null; effect: RuleEffect };
+}
+
+export type StatsRange = "24h" | "7d" | "30d";
+
+/** GET /api/stats (admin only): aggregates over the audit log. */
+export interface Stats {
+  range: StatsRange;
+  bucket: "hour" | "day";
+  totals: { total: number; errors: number; avgMs: number; p95Ms: number };
+  previous: { total: number; errors: number };
+  byOutcome: { outcome: AuditOutcome; count: number }[];
+  series: { bucket: string; success: number; errors: number }[];
+  topTools: { tool: string; server: string | null; count: number }[];
+  topServers: { server: string; count: number }[];
 }

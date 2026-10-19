@@ -4,6 +4,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router";
 import { setUnauthorizedHandler } from "@/api/client";
 import { keys, useMe } from "@/api/hooks";
 import { Layout } from "@/components/Layout";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { createQueryClient } from "@/lib/queryClient";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,6 +14,7 @@ import { AuditPage } from "@/pages/AuditPage";
 import { InvitePage } from "@/pages/InvitePage";
 import { KeysPage } from "@/pages/KeysPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { OverviewPage } from "@/pages/OverviewPage";
 import { ServersPage } from "@/pages/ServersPage";
 import { TeamPage } from "@/pages/TeamPage";
 import { ToolsPage } from "@/pages/ToolsPage";
@@ -32,13 +34,15 @@ function UnauthorizedBridge() {
 export function Providers({ client, children }: { client?: QueryClient; children: ReactNode }) {
   const [qc] = useState(() => client ?? createQueryClient());
   return (
-    <QueryClientProvider client={qc}>
-      <TooltipProvider>
-        <UnauthorizedBridge />
-        {children}
-        <Toaster richColors closeButton />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>
+          <UnauthorizedBridge />
+          {children}
+          <Toaster richColors closeButton />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 
@@ -67,7 +71,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 /** Hides admin pages from members. The gateway enforces the same rule on every call. */
 function AdminOnly({ children }: { children: ReactNode }) {
   const me = useMe();
-  if (me.data?.role !== "admin") return <Navigate to="/servers" replace />;
+  if (me.data?.role !== "admin") return <Navigate to="/" replace />;
   return children;
 }
 
@@ -87,7 +91,7 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<Navigate to="/servers" replace />} />
+        <Route index element={<OverviewPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="servers" element={<ServersPage />} />
         <Route path="tools" element={<ToolsPage />} />

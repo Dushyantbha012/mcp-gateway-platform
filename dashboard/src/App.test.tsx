@@ -105,15 +105,18 @@ describe("auth routing", () => {
 describe("role-based navigation", () => {
   it("members don't see Team, Permissions or Audit, and are bounced from those URLs", async () => {
     loggedInAs(member);
-    server.use(http.get("/api/servers", () => HttpResponse.json([])));
+    server.use(
+      http.get("/api/servers", () => HttpResponse.json([])),
+      http.get("/api/tools", () => HttpResponse.json([])),
+    );
     renderApp("/permissions");
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Chat", "Servers", "Tools", "API keys"]);
-    await waitFor(() => expect(location()).toBe("/servers"));
+    ).toEqual(["Overview", "Chat", "Servers", "Tools", "API keys"]);
+    await waitFor(() => expect(location()).toBe("/"));
   });
 
   it("admins see every page", async () => {
@@ -125,7 +128,16 @@ describe("role-based navigation", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Chat", "Servers", "Tools", "API keys", "Team", "Permissions", "Audit log"]);
+    ).toEqual([
+      "Overview",
+      "Chat",
+      "Servers",
+      "Tools",
+      "API keys",
+      "Team",
+      "Permissions",
+      "Audit log",
+    ]);
   });
 
   it("logs out from the account menu", async () => {
@@ -143,5 +155,35 @@ describe("role-based navigation", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Log out" }));
     expect(await screen.findByRole("heading", { name: "Log in" })).toBeInTheDocument();
     expect(loggedOut).toBe(true);
+  });
+});
+
+describe("command palette", () => {
+  it("opens with Ctrl+K and jumps to a page", async () => {
+    loggedInAs(admin);
+    server.use(
+      http.get("/api/servers", () => HttpResponse.json([serverFixture()])),
+      http.get("/api/tools", () => HttpResponse.json([])),
+      http.get("/api/audit", () => HttpResponse.json([])),
+      http.get("/api/stats", () =>
+        HttpResponse.json({
+          range: "24h",
+          bucket: "hour",
+          totals: { total: 0, errors: 0, avgMs: 0, p95Ms: 0 },
+          previous: { total: 0, errors: 0 },
+          byOutcome: [],
+          series: [],
+          topTools: [],
+          topServers: [],
+        }),
+      ),
+    );
+    const { user } = renderApp("/");
+    await screen.findByRole("heading", { name: /Welcome back/ });
+    await user.keyboard("{Control>}k{/Control}");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("WooCommerce")).toBeInTheDocument();
+    await user.click(within(dialog).getByText("Tools"));
+    await waitFor(() => expect(location()).toBe("/tools"));
   });
 });

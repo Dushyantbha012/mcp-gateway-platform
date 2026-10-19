@@ -137,7 +137,7 @@ export function KeyManager({ userId, ownerLabel }: { userId: string; ownerLabel?
                   {key.revokedAt ? (
                     <Badge variant="secondary">Revoked {timeAgo(key.revokedAt)}</Badge>
                   ) : (
-                    <Badge className="border-transparent bg-emerald-100 text-emerald-800">
+                    <Badge className="border-transparent bg-success-soft text-success">
                       Active
                     </Badge>
                   )}

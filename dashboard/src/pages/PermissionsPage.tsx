@@ -46,6 +46,7 @@ function ruleMatches(rule: PermissionRule, subject: PermissionSubject): boolean 
 /** Why a tool is shown as it is, in a few words. */
 function reasonText(e: EffectiveTool): string {
   if (e.reason === "default") return "no rule";
+  if (e.reason === "read-only-default") return "read-only default (Allow it to grant)";
   if (!e.rule) return "";
   const who = e.rule.subjectType === "user" ? "personal" : "role";
   const what = e.rule.toolName === null ? "server" : "tool";
@@ -65,11 +66,11 @@ interface RowProps {
 function RuleRow({ label, hint, rule, effective, subjectLabel, onChange, busy }: RowProps) {
   return (
     <TableRow>
-      <TableCell>
+      <TableCell data-label="Tool">
         <div className="font-mono text-sm">{label}</div>
         {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       </TableCell>
-      <TableCell className="w-44">
+      <TableCell data-label="Rule" className="w-44">
         <NativeSelect
           aria-label={`Rule for ${subjectLabel} on ${label}`}
           value={rule?.effect ?? "inherit"}
@@ -83,14 +84,12 @@ function RuleRow({ label, hint, rule, effective, subjectLabel, onChange, busy }:
           <option value="deny">Deny</option>
         </NativeSelect>
       </TableCell>
-      <TableCell className="w-56">
+      <TableCell data-label="Result for them" className="w-56">
         {effective && (
           <div className="flex items-center gap-2">
             <Badge
               className={cn(
-                effective.allowed
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-orange-100 text-orange-800",
+                effective.allowed ? "bg-success-soft text-success" : "bg-info-soft text-info",
               )}
             >
               {effective.allowed ? "Allowed" : "Hidden"}
@@ -125,7 +124,7 @@ function ServerCard(props: {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <Table>
+        <Table className="stack-table">
           <TableHeader>
             <TableRow>
               <TableHead>Tool</TableHead>

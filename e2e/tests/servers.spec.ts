@@ -8,7 +8,7 @@ test.describe("admin manages MCP servers", () => {
     const card = page.getByTestId("server-alpha");
     await expect(card.getByText("Connected", { exact: true })).toBeVisible();
     await card.getByRole("button", { name: /tools/ }).click();
-    await expect(card.getByText("alpha__list_orders")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("alpha__list_orders")).toBeVisible();
   });
 
   test("refuses a server URL that points at an internal address (SSRF guard)", async ({ page }) => {
@@ -50,7 +50,10 @@ test.describe("admin manages MCP servers", () => {
 
     const card = page.getByTestId(`server-${slug}`);
     await expect(card.getByText("Connected", { exact: true })).toBeVisible();
-    await expect(card).toContainText("credential stored");
+    await expect(card).toContainText("Bearer token ✓");
+    await card.getByRole("button", { name: /tools/ }).click();
+    await expect(page.getByRole("dialog")).toContainText("credential stored");
+    await page.keyboard.press("Escape");
     // The gateway, not the browser, sent the credential upstream.
     expect(await fakeAuthHeaders("beta")).toContain(`Bearer ${credential}`);
     expect(await toolNames(admin.apiKey)).toContain(`${slug}__search_docs`);

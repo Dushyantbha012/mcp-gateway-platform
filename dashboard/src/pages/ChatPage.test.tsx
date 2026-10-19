@@ -216,7 +216,7 @@ describe("Chat page", () => {
     await user.type(box, "orders");
     await user.keyboard("{Enter}");
     expect((await screen.findByText("2 orders")).tagName).toBe("STRONG");
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(within(screen.getByRole("main")).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument();
   });
 

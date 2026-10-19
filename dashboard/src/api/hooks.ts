@@ -15,6 +15,8 @@ import type {
   RuleEffect,
   Server,
   ServerInput,
+  Stats,
+  StatsRange,
   User,
 } from "./types";
 
@@ -35,6 +37,7 @@ export const keys = {
   permissions: ["permissions"] as const,
   effective: (subject: PermissionSubject) => ["permissions", "effective", subject] as const,
   audit: (filters: AuditFilters) => ["audit", filters] as const,
+  stats: (range: StatsRange) => ["stats", range] as const,
 };
 
 /** The logged-in user; `null` when not logged in (401). */
@@ -98,6 +101,16 @@ export function useEffectivePermissions(subject: PermissionSubject) {
   return useQuery({
     queryKey: keys.effective(subject),
     queryFn: () => api<EffectiveTool[]>(`/permissions/effective?${subjectQuery(subject)}`),
+  });
+}
+
+/** Admin-only aggregates for the overview; refreshed slower than live server status. */
+export function useStats(range: StatsRange, enabled = true) {
+  return useQuery({
+    queryKey: keys.stats(range),
+    queryFn: () => api<Stats>(`/stats?range=${range}`),
+    refetchInterval: 30_000,
+    enabled,
   });
 }
 

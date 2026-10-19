@@ -1,6 +1,46 @@
+import { Check, Copy } from "lucide-react";
+import { useState, type ComponentProps } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+
+/** A fenced block with a copy button that appears on hover/focus. */
+function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    const text = extractText(children);
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="group/code relative mt-3">
+      <pre
+        className="overflow-x-auto rounded-lg border bg-muted/60 p-3 pr-10 font-mono text-xs"
+        {...rest}
+      >
+        {children}
+      </pre>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label={copied ? "Copied" : "Copy code"}
+        className="absolute top-2 right-2 rounded-md border bg-background p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100"
+      >
+        {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+function extractText(node: unknown): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  const props = (node as { props?: { children?: unknown } }).props;
+  return extractText(props?.children);
+}
 
 /**
  * The model's answer as markdown. react-markdown builds React elements and
@@ -28,12 +68,7 @@ const components: Components = {
       {...strip(p)}
     />
   ),
-  pre: (p) => (
-    <pre
-      className="mt-3 overflow-x-auto rounded-md border bg-muted/60 p-3 font-mono text-xs"
-      {...strip(p)}
-    />
-  ),
+  pre: (p) => <CodeBlock {...strip(p)} />,
   code: ({ className, children, ...rest }) => (
     <code
       className={cn(

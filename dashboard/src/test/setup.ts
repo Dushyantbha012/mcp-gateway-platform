@@ -11,3 +11,26 @@ afterEach(() => {
   server.resetHandlers();
 });
 afterAll(() => server.close());
+
+// jsdom has no matchMedia; the sidebar (useIsMobile) and ThemeProvider read it.
+if (typeof window.matchMedia !== "function") {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+
+// cmdk (command palette) and Recharts measure their containers.
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+Element.prototype.scrollIntoView ??= function () {};

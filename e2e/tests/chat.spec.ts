@@ -110,7 +110,8 @@ test.describe("chat agent", () => {
 
     await say(page, "show me some markdown");
     await expect(page.locator("strong", { hasText: "2 products" })).toBeVisible();
-    await expect(page.getByRole("listitem")).toHaveCount(2);
+    // The two bullets of the answer (the sidebar's links are list items too).
+    await expect(page.getByRole("main").getByRole("listitem")).toHaveCount(2);
     await expect(page.getByRole("table")).toContainText("DEMO-MUG");
     await expect(page.locator("code", { hasText: "list_products" })).toBeVisible();
     await expect(page.getByText("**")).toHaveCount(0);

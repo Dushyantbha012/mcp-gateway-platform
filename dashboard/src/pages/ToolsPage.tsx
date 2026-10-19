@@ -4,6 +4,7 @@ import { errorMessage } from "@/api/client";
 import { useMeta, useTools } from "@/api/hooks";
 import { CopyField } from "@/components/CopyField";
 import { PageHeader } from "@/components/PageHeader";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -78,8 +79,8 @@ export function ToolsPage() {
         />
       </div>
       {tools.isError && <p role="alert">Couldn't load tools: {errorMessage(tools.error)}</p>}
-      <div className="rounded-md border bg-background">
-        <Table>
+      <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
+        <Table className="stack-table">
           <TableHeader>
             <TableRow>
               <TableHead>Tool</TableHead>
@@ -90,11 +91,16 @@ export function ToolsPage() {
           <TableBody>
             {shown.map((tool) => (
               <TableRow key={tool.name}>
-                <TableCell>
+                <TableCell data-label="Tool">
                   <code className="text-xs">{tool.name}</code>
                 </TableCell>
-                <TableCell>{slugOfTool(tool.name)}</TableCell>
-                <TableCell className="whitespace-normal text-muted-foreground">
+                <TableCell data-label="Server">
+                  <Badge variant="secondary">{slugOfTool(tool.name)}</Badge>
+                </TableCell>
+                <TableCell
+                  data-label="Description"
+                  className="whitespace-normal text-muted-foreground"
+                >
                   {tool.description}
                 </TableCell>
               </TableRow>

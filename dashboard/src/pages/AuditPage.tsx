@@ -7,6 +7,7 @@ import { NativeSelect } from "@/components/NativeSelect";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Table,
@@ -27,6 +28,7 @@ export function AuditPage() {
   const servers = useServers();
   const entries = useMemo(() => audit.data?.pages.flat() ?? [], [audit.data]);
   const set = (patch: Partial<AuditFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const [requestIdText, setRequestIdText] = useState("");
 
   return (
     <>
@@ -40,7 +42,7 @@ export function AuditPage() {
           </label>
         }
       />
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <NativeSelect
           aria-label="Filter by user"
           value={filters.userId ?? ""}
@@ -90,12 +92,23 @@ export function AuditPage() {
           <option value="mcp">MCP client</option>
           <option value="chat">Chat agent</option>
         </NativeSelect>
+        <Input
+          aria-label="Filter by request ID"
+          placeholder="Request ID"
+          value={requestIdText}
+          onChange={(e) => {
+            const text = e.target.value.trim();
+            setRequestIdText(e.target.value);
+            // Only well-formed IDs reach the gateway, which rejects the rest.
+            set({ requestId: /^[A-Za-z0-9._-]{1,128}$/.test(text) ? text : undefined });
+          }}
+        />
       </div>
       {audit.isError && (
         <p role="alert">Couldn't load the audit log: {errorMessage(audit.error)}</p>
       )}
-      <div className="rounded-md border bg-background">
-        <Table>
+      <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
+        <Table className="stack-table">
           <TableHeader>
             <TableRow>
               <TableHead>Time</TableHead>
@@ -103,6 +116,7 @@ export function AuditPage() {
               <TableHead>Source</TableHead>
               <TableHead>Server</TableHead>
               <TableHead>Tool</TableHead>
+              <TableHead>Request ID</TableHead>
               <TableHead className="text-right">Duration</TableHead>
               <TableHead>Outcome</TableHead>
             </TableRow>
@@ -110,15 +124,31 @@ export function AuditPage() {
           <TableBody>
             {entries.map((e) => (
               <TableRow key={e.id} data-testid="audit-row">
-                <TableCell className="whitespace-nowrap">{dateTime(e.ts)}</TableCell>
-                <TableCell>{e.userEmail}</TableCell>
-                <TableCell>{e.source === "chat" ? "Chat" : "MCP"}</TableCell>
-                <TableCell>{e.server ?? "-"}</TableCell>
-                <TableCell>
-                  <code className="text-xs">{e.tool}</code>
+                <TableCell data-label="Time" className="whitespace-nowrap">
+                  {dateTime(e.ts)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{duration(e.durationMs)}</TableCell>
-                <TableCell className="whitespace-normal">
+                <TableCell data-label="User">{e.userEmail}</TableCell>
+                <TableCell data-label="Source">{e.source === "chat" ? "Chat" : "MCP"}</TableCell>
+                <TableCell data-label="Server">{e.server ?? "-"}</TableCell>
+                <TableCell data-label="Tool">
+                  <code className="text-xs">{e.tool}</code>
+                  {e.detail && (
+                    <p className="mt-1 max-w-xs text-xs text-muted-foreground">{e.detail}</p>
+                  )}
+                </TableCell>
+                <TableCell data-label="Request ID">
+                  {e.requestId ? (
+                    <code className="text-xs" title={e.requestId}>
+                      {e.requestId.slice(0, 8)}
+                    </code>
+                  ) : (
+                    "-"
+                  )}
+                </TableCell>
+                <TableCell data-label="Duration" className="text-right tabular-nums">
+                  {duration(e.durationMs)}
+                </TableCell>
+                <TableCell data-label="Outcome" className="whitespace-normal">
                   <Badge className={cn("border-transparent", OUTCOME[e.outcome].className)}>
                     {OUTCOME[e.outcome].label}
                   </Badge>
@@ -130,7 +160,7 @@ export function AuditPage() {
             ))}
             {audit.data && entries.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   No tool calls match.
                 </TableCell>
               </TableRow>

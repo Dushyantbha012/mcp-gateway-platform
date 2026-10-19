@@ -30,16 +30,23 @@ test("two users: admin invites a member, the member connects an MCP client, the 
   await memberPage.getByLabel("New password").fill(password);
   await memberPage.getByLabel("Confirm password").fill(password);
   await memberPage.getByRole("button", { name: /Set password/ }).click();
-  await expect(memberPage.getByRole("heading", { name: "MCP servers" })).toBeVisible();
 
   // A member's view: no admin pages, no edit controls, no upstream URLs.
   const nav = memberPage.getByRole("navigation", { name: "Main" });
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Servers", "Tools", "API keys"]);
+  await expect(nav.getByRole("link")).toHaveText([
+    "Overview",
+    "Chat",
+    "Servers",
+    "Tools",
+    "API keys",
+  ]);
+  await nav.getByRole("link", { name: "Servers" }).click();
+  await expect(memberPage.getByRole("heading", { name: "MCP servers" })).toBeVisible();
   await expect(memberPage.getByRole("button", { name: "Add server" })).toHaveCount(0);
   await expect(memberPage.getByTestId("server-alpha").getByRole("switch")).toHaveCount(0);
   await expect(memberPage.getByTestId("server-alpha")).not.toContainText("http://");
   await memberPage.goto("/audit");
-  await expect(memberPage).toHaveURL(/\/servers$/);
+  await expect(memberPage).toHaveURL(/localhost:\d+\/$/); // non-admin pages send a member to the Overview
 
   // The member generates their own key; it's shown once.
   await memberPage.getByRole("link", { name: "API keys" }).click();

@@ -18,6 +18,7 @@ const entry = (id: number, overrides: Partial<AuditEntry> = {}): AuditEntry => (
   durationMs: 42,
   outcome: "success",
   error: null,
+  requestId: null,
   ...overrides,
 });
 
@@ -59,6 +60,26 @@ describe("Audit page", () => {
     expect(last.get("outcome")).toBe("timeout");
     expect(last.get("userId")).toBe(member.id);
     expect(last.get("limit")).toBe(String(AUDIT_PAGE));
+  });
+
+  it("shows the request ID and filters by it", async () => {
+    loggedInAs(admin);
+    const queries: URLSearchParams[] = [];
+    server.use(
+      http.get("/api/users", () => HttpResponse.json([admin])),
+      http.get("/api/servers", () => HttpResponse.json([])),
+      http.get("/api/audit", ({ request }) => {
+        queries.push(new URL(request.url).searchParams);
+        return HttpResponse.json([entry(1, { requestId: "req-0123456789" })]);
+      }),
+    );
+    const { user } = renderApp("/audit");
+    const row = await screen.findByTestId("audit-row");
+    expect(row).toHaveTextContent("req-0123");
+
+    await user.type(screen.getByLabelText("Filter by request ID"), "req-0123456789");
+    await screen.findByTestId("audit-row");
+    expect(queries[queries.length - 1].get("requestId")).toBe("req-0123456789");
   });
 
   it("pages back with the keyset cursor", async () => {

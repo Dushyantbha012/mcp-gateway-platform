@@ -39,6 +39,8 @@ export async function login(page: Page, email: string, password: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
+  // Logging in lands on the Overview; the tests start from the servers page.
+  await page.getByRole("link", { name: "Servers" }).click();
   await expect(page.getByRole("heading", { name: "MCP servers" })).toBeVisible();
 }
 

@@ -22,7 +22,8 @@ describe("Servers page", () => {
     expect(screen.queryByRole("button", { name: "Add server" })).not.toBeInTheDocument();
 
     await user.click(within(card).getByRole("button", { name: "1 tool" }));
-    expect(within(card).getByText("woocommerce__list_orders")).toBeInTheDocument();
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("woocommerce__list_orders")).toBeInTheDocument();
   });
 
   it("shows an unreachable server with its reason", async () => {

@@ -87,7 +87,7 @@ test("admin hides a tool from all members in the UI: gone from their tools/list,
   await expect(memberPage.getByText("alpha__list_orders")).toBeVisible();
   await expect(memberPage.getByText("alpha__get_order")).toHaveCount(0);
   await memberPage.goto("/permissions");
-  await expect(memberPage).toHaveURL(/\/servers$/);
+  await expect(memberPage).toHaveURL(/localhost:\d+\/$/); // non-admin pages send a member to the Overview
   await ctx.close();
 
   // --- The denied attempt is in the audit log under the member ---
