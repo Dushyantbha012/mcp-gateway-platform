@@ -108,7 +108,15 @@ describe.skipIf(!enabled)("live: deployed gateway", () => {
     ).body;
 
     const client = await connect(issued.key);
-    expect(await names(client)).toEqual(expect.arrayContaining(WOO_TOOLS));
+    // Members are read-only by default: the store's two write tools are hidden from them.
+    const memberNames = await names(client);
+    expect(memberNames).toEqual(
+      expect.arrayContaining(
+        WOO_TOOLS.filter((n) => !/create_product|update_order_status/.test(n)),
+      ),
+    );
+    expect(memberNames).not.toContain("woocommerce__create_product");
+    expect(memberNames).not.toContain("woocommerce__update_order_status");
     const orders = (await client.callTool({
       name: "woocommerce__list_orders",
       arguments: {},

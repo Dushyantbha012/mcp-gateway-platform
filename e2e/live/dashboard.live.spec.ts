@@ -32,8 +32,9 @@ test("live: admin sees WooCommerce Connected; killing its MCP pod shows Unreacha
     "get_order",
     "update_order_status",
   ]) {
-    await expect(card.getByText(`woocommerce__${tool}`)).toBeVisible();
+    await expect(page.getByRole("dialog").getByText(`woocommerce__${tool}`)).toBeVisible();
   }
+  await page.keyboard.press("Escape");
 
   try {
     kubectl("scale", `deployment/${MCP_DEPLOYMENT}`, "--replicas=0");

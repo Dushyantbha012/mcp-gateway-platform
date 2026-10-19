@@ -22,6 +22,10 @@ gateway:
     # (fewer tokens per turn on the free tier); MCP clients still get the full list.
     search:
       chatMode: "on"
+    # Search mode adds a model step before each tool call, and the Gemini free tier
+    # answers in ~10-15 s per step, so a prompt that needs two upstreams can pass 90 s.
+    chat:
+      turnTimeoutMs: 180000
     ssrf:
       # Test fixture only: the live suites register a black-hole upstream here
       # to prove a hanging server can't slow anything else down.
