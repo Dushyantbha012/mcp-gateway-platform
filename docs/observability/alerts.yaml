@@ -1,0 +1,40 @@
+# Example Prometheus Operator alert rules for the gateway. Apply with
+#   kubectl apply -n <namespace Prometheus watches> -f alerts.yaml
+# Add the labels your Prometheus selects PrometheusRules on (often `release: <helm release>`).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mcp-gateway
+spec:
+  groups:
+    - name: mcp-gateway
+      rules:
+        - alert: McpUpstreamDown
+          # max by (server): every replica reports the same database row.
+          expr: max by (server) (mcp_gateway_upstream_up) == 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "MCP upstream {{ $labels.server }} has been unreachable for 5 minutes"
+            description: "The gateway's health check for {{ $labels.server }} keeps failing. Its tools are hidden from tools/list."
+        - alert: McpToolErrorRateHigh
+          expr: |
+            sum by (server) (rate(mcp_gateway_tool_calls_total{outcome=~"tool_error|timeout|unreachable"}[10m]))
+              / sum by (server) (rate(mcp_gateway_tool_calls_total{outcome!~"denied|rejected"}[10m])) > 0.05
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "More than 5% of calls to {{ $labels.server }} are failing"
+        - alert: McpToolLatencyHigh
+          expr: |
+            histogram_quantile(0.95, sum by (le, server) (rate(mcp_gateway_tool_call_duration_seconds_bucket[10m]))) > 5
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "p95 tool-call latency for {{ $labels.server }} is above 5s"
+        - alert: McpGatewayTargetDown
+          expr: up{job=~".*gateway.*"} == 0
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "Prometheus cannot scrape a gateway pod"
