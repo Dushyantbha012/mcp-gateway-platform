@@ -10,6 +10,9 @@ purpose: this is the whole network design, readable top to bottom.
                                             ranges excluded)
   Traefik ──► WordPress
   bootstrap Job ──► MySQL, public internet (downloads WooCommerce)
+  provisioner ──► Postgres, Kubernetes API   (no ingress at all)
+  gateway ──► each provisioned store's MCP server (store-<slug> namespaces,
+              which carry their own deny-by-default policies)
 
 NetworkPolicies only ever add allowances, and a pod that no policy selects is
 wide open - hence the default-deny at the top, which selects every pod. Ports
@@ -132,6 +135,18 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ $store }}
+              app.kubernetes.io/component: woocommerce-mcp
+      ports:
+        - port: 3000
+{{- end }}
+{{- if .Values.gateway.stores.enabled }}
+    # Stores the provisioner created, each in its own namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              urumi.ai/managed-by: provisioner
+          podSelector:
+            matchLabels:
               app.kubernetes.io/component: woocommerce-mcp
       ports:
         - port: 3000
@@ -278,6 +293,52 @@ spec:
       ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 80 }
+{{- end }}
+{{- end }}
+{{- if and .Values.gateway.enabled .Values.gateway.stores.enabled }}
+---
+# Provisioner: nothing may connect to it; it reaches only its database and the
+# Kubernetes API. It never talks to the stores it builds - only to the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: provisioner
+  labels:
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $gw }}
+      app.kubernetes.io/component: provisioner
+  policyTypes: ["Ingress", "Egress"]
+{{- if $np.metricsScrape.enabled }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.metricsScrape.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.metricsScrape.podLabels | nindent 14 }}
+      ports:
+        - port: 8081
+{{- else }}
+  ingress: []
+{{- end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $gw }}
+              app.kubernetes.io/component: postgres
+      ports:
+        - port: 5432
+{{- with $np.apiServerCidr }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - port: {{ $np.apiServerPort }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -144,6 +144,12 @@ spec:
             - name: COOKIE_SECURE
               value: {{ hasPrefix "https://" . | quote }}
             {{- end }}
+            - name: STORES_ENABLED
+              value: {{ .Values.stores.enabled | quote }}
+            - name: STORES_MAX_PER_USER
+              value: {{ .Values.stores.maxPerUser | quote }}
+            - name: STORES_TIMEOUT_SECONDS
+              value: {{ .Values.stores.timeoutSeconds | quote }}
             {{- if .Values.seedWoocommerce.enabled }}
             - name: SEED_WOOCOMMERCE_URL
               value: {{ include "gateway.woocommerceUrl" . | quote }}
@@ -152,6 +158,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.seedWoocommerce.tokenSecret }}
                   key: token
+            {{- with .Values.seedWoocommerce.storeUrl }}
+            - name: SEED_STORE_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
           securityContext:
             allowPrivilegeEscalation: false

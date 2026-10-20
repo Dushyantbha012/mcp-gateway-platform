@@ -300,3 +300,48 @@ describe.skipIf(!hasHelm)("parity with the Helm store chart", () => {
     expect(ours.env!.map((e) => e.name).sort()).toEqual(theirs.env!.map((e) => e.name).sort());
   });
 });
+
+describe.skipIf(!hasHelm)("the template Helm hands the provisioner", () => {
+  it.each(["values-local.yaml", "values-prod.yaml"])("parses (%s)", (values) => {
+    const dir = fileURLToPath(new URL("../../../../helm", import.meta.url));
+    const out = execFileSync(
+      "helm",
+      [
+        "template",
+        "platform",
+        dir,
+        "-n",
+        "urumi",
+        "-f",
+        `${dir}/values.yaml`,
+        "-f",
+        `${dir}/${values}`,
+      ],
+      { encoding: "utf8" },
+    );
+    const docs = (yaml.loadAll(out) as K8sObject[]).filter(Boolean);
+    const provisioner = docs.find(
+      (d) => d.kind === "Deployment" && d.metadata.name === "platform-gateway-provisioner",
+    )!;
+    const env = (provisioner.spec as { template: PodTemplate }).template.spec.containers[0]
+      .env as unknown as { name: string; value?: string }[];
+    const tpl = parseStoreTemplate(env.find((e) => e.name === "STORES_TEMPLATE")!.value);
+    expect(tpl.gatewayNamespace).toBe("urumi");
+    expect(tpl.mcpClientLabel).toBe("urumi.ai/mcp-client");
+    expect(tpl.ingressController.namespace).toBe("kube-system");
+    if (values === "values-local.yaml") expect(tpl.baseDomain).toBe("store.local.test");
+    else expect(tpl).toMatchObject({ tls: true, baseDomain: "stores.change-me.example" });
+    // The gateway may reach provisioned stores' MCP servers, and nothing may reach the provisioner.
+    const policy = (name: string) =>
+      docs.find((d) => d.kind === "NetworkPolicy" && d.metadata.name === name)!.spec as {
+        ingress?: unknown[];
+        egress: { to: { namespaceSelector?: { matchLabels: Record<string, string> } }[] }[];
+      };
+    expect(
+      policy("gateway").egress.some(
+        (r) => r.to[0].namespaceSelector?.matchLabels["urumi.ai/managed-by"] === "provisioner",
+      ),
+    ).toBe(true);
+    if (values === "values-prod.yaml") expect(policy("provisioner").ingress).toEqual([]);
+  });
+});

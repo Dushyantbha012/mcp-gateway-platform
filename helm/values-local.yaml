@@ -34,6 +34,15 @@ gateway:
     host: gateway.local.test
   storageClassName: local-path
   dashboardUrl: http://dashboard.local.test # http locally: no Secure cookie flag
+  seedWoocommerce:
+    storeUrl: http://store.local.test
+  # Multi-store: stores at <slug>.store.local.test. /etc/hosts has no wildcards,
+  # so scripts/verify-phase10.sh prints the line to add for each new store.
+  stores:
+    enabled: true
+    template:
+      baseDomain: store.local.test
+      storageClassName: local-path
 
 dashboard:
   ingress:

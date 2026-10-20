@@ -24,8 +24,10 @@ import sys
 EXCEPTIONS: dict[tuple[str, str], str] = {}
 
 def allowed_token(labels: dict) -> bool:
-    """Only the gateway calls the Kubernetes API (it manages upstream Secrets)."""
-    return labels.get("app.kubernetes.io/component") == "gateway"
+    """Only two pods call the Kubernetes API: the gateway (upstream Secrets, a
+    Role in one namespace) and the provisioner (builds store namespaces; its
+    ClusterRole is reviewed in helm/charts/gateway/templates/provisioner.yaml)."""
+    return labels.get("app.kubernetes.io/component") in ("gateway", "provisioner")
 
 
 def check(pod: dict) -> list[str]:

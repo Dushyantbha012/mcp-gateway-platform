@@ -135,5 +135,10 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "gateway.selector" (list . "gateway") | nindent 14 }}
+        {{- if .Values.stores.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "gateway.selector" (list . "provisioner") | nindent 14 }}
+        {{- end }}
       ports:
         - port: postgres
