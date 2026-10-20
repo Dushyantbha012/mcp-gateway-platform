@@ -38,6 +38,7 @@ test("two users: admin invites a member, the member connects an MCP client, the 
     "Chat",
     "Servers",
     "Tools",
+    "Approvals",
     "API keys",
   ]);
   await nav.getByRole("link", { name: "Servers" }).click();
