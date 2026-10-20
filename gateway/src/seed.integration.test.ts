@@ -38,12 +38,24 @@ describe.skipIf(!hasTestDb)("startup seeding", () => {
     expect(woo).toMatchObject({ name: "WooCommerce", auth_type: "bearer", enabled: true });
     expect(woo!.has_credential).toBe(true);
     expect((await box.get(woo!.id))?.value).toBe("wc-token");
+
+    const stores = await t.db.selectFrom("stores").selectAll().execute();
+    expect(stores).toEqual([
+      expect.objectContaining({
+        slug: "woocommerce",
+        kind: "default",
+        status: "ready",
+        namespace: "urumi",
+        server_id: woo!.id,
+      }),
+    ]);
   });
 
   it("is idempotent, also when replicas seed concurrently", async () => {
     await Promise.all([seed(t.db, box, config), seed(t.db, box, config), seed(t.db, box, config)]);
     expect(await listUsers(t.db)).toHaveLength(1);
     expect(await listServers(t.db)).toHaveLength(1);
+    expect(await t.db.selectFrom("stores").selectAll().execute()).toHaveLength(1);
     const keys = await t.db.selectFrom("api_keys").selectAll().execute();
     expect(keys).toHaveLength(1);
   });

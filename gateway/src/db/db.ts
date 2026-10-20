@@ -9,6 +9,7 @@ import * as m005 from "./migrations/005_drop_credential_ciphertext.js";
 import * as m006 from "./migrations/006_audit_request_id.js";
 import * as m007 from "./migrations/007_audit_detail.js";
 import * as m008 from "./migrations/008_write_approvals.js";
+import * as m009 from "./migrations/009_stores.js";
 import type { Database } from "./schema.js";
 
 export type Db = Kysely<Database>;
@@ -24,6 +25,7 @@ const migrations: Record<string, Migration> = {
   "006_audit_request_id": m006,
   "007_audit_detail": m007,
   "008_write_approvals": m008,
+  "009_stores": m009,
 };
 
 export function createDb(connectionString: string, max = 10): Db {

@@ -67,6 +67,8 @@ const schema = z
     ),
     SEED_WOOCOMMERCE_URL: optionalString.pipe(z.url().optional()),
     SEED_WOOCOMMERCE_TOKEN: optionalString,
+    // Public storefront URL of the seeded store, shown on the Stores page.
+    SEED_STORE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
     // Public URLs, from Helm values. DASHBOARD_URL builds invite links;
     // PUBLIC_MCP_URL is shown to members as "point your MCP client here".
     DASHBOARD_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
@@ -203,7 +205,7 @@ export interface Config {
   /** Undefined when no provider has an API key: chat is switched off. */
   chat?: ChatConfig;
   bootstrapAdmin?: { email: string; apiKey: string; password?: string };
-  seedWoocommerce?: { url: string; token: string };
+  seedWoocommerce?: { url: string; token: string; storeUrl?: string };
 }
 
 /** Parses and validates env; throws one readable error listing every problem. */
@@ -290,7 +292,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : undefined,
     seedWoocommerce:
       e.SEED_WOOCOMMERCE_URL && e.SEED_WOOCOMMERCE_TOKEN
-        ? { url: e.SEED_WOOCOMMERCE_URL, token: e.SEED_WOOCOMMERCE_TOKEN }
+        ? {
+            url: e.SEED_WOOCOMMERCE_URL,
+            token: e.SEED_WOOCOMMERCE_TOKEN,
+            storeUrl: e.SEED_STORE_URL,
+          }
         : undefined,
   };
 }

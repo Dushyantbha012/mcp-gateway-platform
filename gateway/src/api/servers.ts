@@ -80,6 +80,7 @@ export function serverView(server: McpServer, opts: { admin: boolean }) {
     authHeaderName: server.auth_header_name,
     hasCredential: server.has_credential,
     timeoutMs: server.timeout_ms,
+    managedBy: server.managed_by,
     tools: index.tools.map((t) => ({
       name: t.name,
       upstreamName: index.routes.get(t.name)!.upstreamName,
@@ -122,6 +123,20 @@ export function serversApi(deps: {
     const parsed = z.uuid().safeParse(id);
     const server = parsed.success ? await getServer(db, parsed.data) : undefined;
     if (!server) throw notFound("Server");
+    return server;
+  };
+
+  /** The provisioner owns managed rows; editing them here would fight it. */
+  const loadUnmanaged = async (id: unknown) => {
+    const server = await load(id);
+    if (server.managed_by) {
+      const owner = server.managed_by === "store" ? "Stores" : "Hosted servers";
+      throw new HttpError(
+        409,
+        "managed_server",
+        `This server is managed by the provisioner; change it from the ${owner} page`,
+      );
+    }
     return server;
   };
 
@@ -177,7 +192,7 @@ export function serversApi(deps: {
   });
 
   api.patch("/:id", requireAdmin, async (req, res) => {
-    const current = await load(req.params.id);
+    const current = await loadUnmanaged(req.params.id);
     const body = parse(updateSchema, req.body);
     const authType = body.authType ?? current.auth_type;
     const changes: McpServerUpdate = {
@@ -217,7 +232,7 @@ export function serversApi(deps: {
   });
 
   api.delete("/:id", requireAdmin, async (req, res) => {
-    const server = await load(req.params.id);
+    const server = await loadUnmanaged(req.params.id);
     await deleteServer(db, server.id);
     // The row is gone, so a failure here only leaves an orphan for the sweep.
     await credentials.delete(server.id).catch(() => undefined);
