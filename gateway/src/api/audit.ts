@@ -9,7 +9,7 @@ const querySchema = z.object({
   userId: z.uuid().optional(),
   server: z.string().max(64).optional(),
   outcome: z
-    .enum(["success", "tool_error", "timeout", "unreachable", "rejected", "denied"])
+    .enum(["success", "tool_error", "timeout", "unreachable", "rejected", "denied", "held"])
     .optional(),
   source: z.enum(["mcp", "chat"]).optional(),
   requestId: z

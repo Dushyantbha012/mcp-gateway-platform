@@ -107,6 +107,7 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase6.sh   # three upstreams + the full definition of done (needs the GitHub token too)
    ./scripts/verify-phase7.sh   # tool permissions (re-runs Phase 6 and 2-5)
    ./scripts/verify-phase8.sh   # security hardening (re-runs everything above under default-deny networking)
+   ./scripts/verify-claude-code.sh   # a real Claude Code session as a member: read, denied tool, held write, approval
    ```
 
    Each accepts `SKIP_DEPLOY=1` to check the running deployment without
@@ -370,8 +371,21 @@ shows an **Approval needed** card, and **Approve** / **Decline** answer it. The
 approval is enforced by the gateway, not the model: `POST /api/chat` accepts
 `approved: [{name, args}]`, and each entry lets one call to that tool with those
 exact arguments through; anything else is held again. Reads run without asking.
-`gateway.chat.confirmWrites: false` (env `CHAT_CONFIRM_WRITES`) turns it off. This
-guards the chat agent only: an MCP client's own tool calls are as it sent them.
+`gateway.chat.confirmWrites: false` (env `CHAT_CONFIRM_WRITES`) turns it off. The
+card also shows what the upstream says the tool does (its description and
+`destructiveHint`), not only the arguments the model chose.
+
+**Approving writes from MCP clients.** The same rule holds for Claude Code, Cursor
+and any other client (`gateway.approvals.mcpWrites`, env `MCP_CONFIRM_WRITES`, default
+on; admins too). The first call of a write is refused with a message naming a
+request id, and a pending request appears on the dashboard's **Approvals** page.
+The user checks the arguments and approves there; the client then repeats the same
+call and it runs once. It is enforced in the gateway (`write_approvals` table), not
+in the client: an approval is tied to the user, the tool and the exact arguments,
+is used up by one call, and expires after 10 minutes. Only a dashboard session can
+approve; the API key the client holds gets a 403, so the client can't approve for
+itself. `./scripts/verify-claude-code.sh` runs this with a real Claude Code session
+as a member (see Tests).
 
 **Choosing the model.** The default is Groq's `openai/gpt-oss-120b` (tool calling
 over Groq's OpenAI-compatible API; `gateway.chat.groqModel`, and
@@ -528,10 +542,11 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 - **Chat history lives in the browser.** Refreshing the page starts a new
   conversation, and only the text of earlier turns (not their tool calls) is
   sent back to the model.
-- **Chat approvals are per call, not per tool.** The agent asks before every
-  write (see "Approving writes"), but the user sees the model's arguments, not
-  what the upstream will do with them, and an MCP client gets no prompt from the
-  gateway at all (Claude Code and Cursor ask on their side). Members are
+- **Approvals are per call, not per tool**, for the chat agent and MCP clients
+  alike (see "Approving writes"). The prompt shows the arguments plus the
+  upstream's own description and hints; the gateway cannot know more about what an
+  upstream does than the upstream says. An MCP client has to retry after the user
+  approves (the transport is stateless, so the gateway can't ask mid-call). Members are
   read-only by default, so a write tool
   (WooCommerce's `create_product`, `update_order_status`, GitHub's writes) works
   for a member only after an admin Allows it; an upstream tool without a

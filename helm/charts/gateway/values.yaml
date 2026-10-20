@@ -56,6 +56,11 @@ gateway:
   # tools the upstream marks readOnlyHint (admins Allow the rest, per user or
   # for all members), "allowAll" = everything until a Deny rule says otherwise.
   memberDefault: readOnly
+  approvals:
+    # Hold every write (a tool without readOnlyHint) that an MCP client calls until
+    # its user approves it on the dashboard's Approvals page; the client retries.
+    # Applies to admins too. The chat agent has its own prompt (chat.confirmWrites).
+    mcpWrites: true
   # Prometheus metrics at GET /metrics on the app port. Never on the Ingress;
   # allow a scraper in with global.networkPolicy.metricsScrape.
   # Search-then-execute: expose only search_tools + call_tool, so a client with

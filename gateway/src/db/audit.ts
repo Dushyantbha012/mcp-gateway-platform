@@ -43,15 +43,15 @@ export interface AuditStats {
 
 /**
  * Aggregates the audit log over `[since, now)`. "Errors" are every outcome
- * except success, rejected (bad input from the caller) and denied (policy
- * working as intended).
+ * except success, rejected (bad input from the caller), denied (policy
+ * working as intended) and held (a write waiting for its approval).
  */
 export async function auditStats(
   db: Db,
   opts: { since: Date; previousSince: Date; bucket: "hour" | "day" },
 ): Promise<AuditStats> {
   const { since, previousSince, bucket } = opts;
-  const isError = sql<boolean>`outcome not in ('success', 'rejected', 'denied')`;
+  const isError = sql<boolean>`outcome not in ('success', 'rejected', 'denied', 'held')`;
 
   const totals = await db
     .selectFrom("audit_log")

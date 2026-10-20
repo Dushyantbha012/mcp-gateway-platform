@@ -1,7 +1,7 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Principal } from "../db/apiKeys.js";
 import { noopMetrics, type Metrics } from "../metrics/metrics.js";
-import type { CallContext, ToolRouter } from "../upstreams/router.js";
+import type { CallContext, ToolInfo, ToolRouter } from "../upstreams/router.js";
 import {
   CALL_TOOL,
   isMetaTool,
@@ -104,6 +104,11 @@ export class ToolSurface {
   /** See `ToolRouter.isReadOnly`; the chat agent asks before running a tool that isn't. */
   isReadOnly(name: string): Promise<boolean | undefined> {
     return this.router.isReadOnly(name);
+  }
+
+  /** See `ToolRouter.describeTool`. */
+  describeTool(name: string): Promise<ToolInfo | undefined> {
+    return this.router.describeTool(name);
   }
 
   private useSearch(toolCount: number, override?: SurfaceOverride): boolean {

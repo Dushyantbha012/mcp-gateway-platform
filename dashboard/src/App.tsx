@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { createQueryClient } from "@/lib/queryClient";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ApprovalsPage } from "@/pages/ApprovalsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { PermissionsPage } from "@/pages/PermissionsPage";
 import { AuditPage } from "@/pages/AuditPage";
@@ -95,6 +96,7 @@ export function AppRoutes() {
         <Route path="chat" element={<ChatPage />} />
         <Route path="servers" element={<ServersPage />} />
         <Route path="tools" element={<ToolsPage />} />
+        <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="keys" element={<KeysPage />} />
         <Route
           path="team"

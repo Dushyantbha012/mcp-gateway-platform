@@ -47,6 +47,10 @@ export interface AgentDeps {
   needsConfirmation?: (name: string) => Promise<boolean>;
   /** Writes the user has approved; each lets one matching call (same tool, same arguments) through. */
   approved?: ApprovedCall[];
+  /** The upstream's own description of a held tool, shown on its approval prompt. */
+  describeTool?: (
+    name: string,
+  ) => Promise<{ description: string; destructive?: boolean; idempotent?: boolean } | undefined>;
   limits?: Partial<AgentLimits>;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
@@ -221,6 +225,7 @@ export async function* runAgent(
           name: shown.name,
           server: shown.server,
           args: shown.args,
+          info: await deps.describeTool?.(shown.name),
         };
         continue;
       }

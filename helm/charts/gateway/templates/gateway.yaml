@@ -71,6 +71,8 @@ spec:
               value: {{ .Values.gateway.metrics.enabled | quote }}
             - name: MEMBER_DEFAULT_POLICY
               value: {{ .Values.gateway.memberDefault | quote }}
+            - name: MCP_CONFIRM_WRITES
+              value: {{ .Values.gateway.approvals.mcpWrites | quote }}
             - name: SEARCH_MODE
               value: {{ .Values.gateway.search.mode | quote }}
             - name: CHAT_SEARCH_MODE

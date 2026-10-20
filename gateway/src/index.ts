@@ -58,7 +58,7 @@ const health = new HealthChecker(db, registry, {
   listTimeoutMs: config.listTimeoutMs,
 });
 const metrics = config.metricsEnabled ? new GatewayMetrics(() => listServers(db)) : undefined;
-const router = new ToolRouter(db, registry, metrics, config.memberDefault);
+const router = new ToolRouter(db, registry, metrics, config.memberDefault, config.mcpConfirmWrites);
 const tools = new ToolSurface(
   router,
   { mode: config.searchMode, autoThreshold: config.searchAutoThreshold },

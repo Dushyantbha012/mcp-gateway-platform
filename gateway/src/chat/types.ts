@@ -75,7 +75,15 @@ export type ChatEvent =
       durationMs: number;
     }
   /** A write tool the model wants to run: held until the user approves it (the turn ends here). */
-  | { type: "confirm"; id: string; name: string; server: string | null; args: unknown }
+  | {
+      type: "confirm";
+      id: string;
+      name: string;
+      server: string | null;
+      args: unknown;
+      /** What the upstream says the tool does, so the user judges it and not just the arguments. */
+      info?: { description: string; destructive?: boolean; idempotent?: boolean };
+    }
   | { type: "text"; text: string }
   | { type: "done"; steps: number }
   | { type: "error"; code: string; message: string };

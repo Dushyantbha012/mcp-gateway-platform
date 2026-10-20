@@ -3,6 +3,7 @@ import express from "express";
 import { auditApi } from "./api/audit.js";
 import { statsApi } from "./api/stats.js";
 import { chatApi, type ChatSetup } from "./api/chat.js";
+import { approvalsApi } from "./api/approvals.js";
 import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
 import { permissionsApi } from "./api/permissions.js";
@@ -109,6 +110,7 @@ export function createApp(deps: AppDeps) {
     });
   });
   api.use("/servers", serversApi(deps));
+  api.use("/approvals", approvalsApi(deps.db, tools));
   api.use("/permissions", permissionsApi(deps.db, deps.router.memberDefault));
   api.use("/audit", auditApi(deps.db));
   api.use("/stats", statsApi(deps.db));

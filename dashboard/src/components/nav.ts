@@ -1,5 +1,6 @@
 import {
   Activity,
+  CheckCheck,
   KeyRound,
   LayoutDashboard,
   MessageSquare,
@@ -22,6 +23,7 @@ export const WORKSPACE_NAV: NavItem[] = [
   { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/servers", label: "Servers", icon: Server },
   { to: "/tools", label: "Tools", icon: Wrench },
+  { to: "/approvals", label: "Approvals", icon: CheckCheck },
   { to: "/keys", label: "API keys", icon: KeyRound },
 ];
 

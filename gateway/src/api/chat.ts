@@ -128,6 +128,16 @@ export function chatApi(tools: ToolSurface, setup: ChatSetup | undefined) {
           needsConfirmation: setup.confirmWrites
             ? async (name) => (await tools.isReadOnly(name)) === false
             : undefined,
+          describeTool: async (name) => {
+            const t = await tools.describeTool(name);
+            return (
+              t && {
+                description: t.description,
+                destructive: t.destructive,
+                idempotent: t.idempotent,
+              }
+            );
+          },
           listTools: () => tools.listTools(principal),
           callTool: (name, args) => tools.callTool({ principal, source: "chat" }, name, args),
         },

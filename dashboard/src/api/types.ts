@@ -9,7 +9,7 @@ export type Role = "admin" | "member";
 export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "disabled" | "unknown";
 export type AuditOutcome =
-  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
 export type AuditSource = "mcp" | "chat";
 
 export interface User {
@@ -87,6 +87,23 @@ export interface McpTool {
   inputSchema?: unknown;
 }
 
+/** A write an MCP client asked for, waiting for its user. */
+export interface WriteApproval {
+  id: string;
+  name: string;
+  args: unknown;
+  tool: (ToolHints & { server: string }) | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** What an upstream says about a tool, shown on approval prompts. */
+export interface ToolHints {
+  description: string;
+  destructive?: boolean;
+  idempotent?: boolean;
+}
+
 export interface AuditEntry {
   id: string;
   ts: string;
@@ -146,7 +163,14 @@ export type ChatEvent =
       durationMs: number;
     }
   /** A tool that changes data, held until the user approves it; the turn ends after it. */
-  | { type: "confirm"; id: string; name: string; server: string | null; args: unknown }
+  | {
+      type: "confirm";
+      id: string;
+      name: string;
+      server: string | null;
+      args: unknown;
+      info?: ToolHints;
+    }
   | { type: "text"; text: string }
   | { type: "done"; steps: number }
   | { type: "error"; code: string; message: string };

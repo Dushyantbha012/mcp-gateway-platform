@@ -69,7 +69,7 @@ model after a call). It can also be slow, huge, or lie about its tools.
 | A compromised gateway reaches internal services | Default-deny ingress **and** egress NetworkPolicies; the gateway may reach the public internet only with private ranges excluded (`helm/templates/networkpolicies.yaml`, proven by `scripts/netpol_matrix.py`) |
 | A hanging or flooding upstream | Per-call deadline, result size cap (`MAX_RESULT_BYTES`), health check with its own timeout; other upstreams are unaffected |
 | An upstream's tool shadows another's | Every tool is namespaced `<slug>__<tool>`; a server cannot claim another's names |
-| A tool description or result tries to steer the chat model into doing something harmful | **Not solved.** Damage is bounded, not prevented: the agent acts with the user's own permissions (read-only for members by default), every call is audited, the GitHub token is read-only, and results are capped at 20k characters. The chat agent also cannot run a write tool on its own: the gateway holds it until the user approves that exact call in the dashboard, so injected text can't make a change without a click (MCP clients get no such prompt from the gateway) |
+| A tool description or result tries to steer the chat model into doing something harmful | **Not solved.** Damage is bounded, not prevented: the agent acts with the user's own permissions (read-only for members by default), every call is audited, the GitHub token is read-only, and results are capped at 20k characters. Neither the chat agent nor an MCP client can run a write tool on its own: the gateway holds it until the user approves that exact call (same user, tool and arguments, single use, 10 minutes) in the dashboard, and an API key can't approve, so injected text can't make a change without a click |
 | An upstream returns HTML/script into the UI | Chat answers are rendered as Markdown with no raw HTML; upstream error text is sanitised before it reaches the dashboard |
 
 ## 4. What one team member can do to another
@@ -103,7 +103,7 @@ model after a call). It can also be slow, huge, or lie about its tools.
 
 - **Prompt injection is not solved** (section 3). Mitigations bound the damage.
 - **Allow rules are powerful.** An admin who allows a write tool to all members
-  accepts the consequences; the chat agent asks the user before each write, but the gateway has no approval workflow for MCP clients.
+  accepts the consequences, although every write still waits for the user's approval. That prompt shows the arguments and the upstream's own description of the tool, so it is only as honest as the upstream; an MCP client must retry after approval.
 - **Rate limits are per gateway pod** (in memory); with more replicas an attacker
   gets that many attempts.
 - **`/metrics` is unauthenticated** (tool and server names, counts; never

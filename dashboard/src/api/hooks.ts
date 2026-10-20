@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { api } from "./client";
 import type {
   ApiKey,
+  WriteApproval,
   AuditEntry,
   AuditFilters,
   EffectiveTool,
@@ -37,6 +38,7 @@ export const keys = {
   permissions: ["permissions"] as const,
   effective: (subject: PermissionSubject) => ["permissions", "effective", subject] as const,
   audit: (filters: AuditFilters) => ["audit", filters] as const,
+  approvals: ["approvals"] as const,
   stats: (range: StatsRange) => ["stats", range] as const,
 };
 
@@ -281,5 +283,23 @@ export function useUpdateUser() {
       changes: { name?: string; role?: Role; disabled?: boolean };
     }) => api<User>(`/users/${id}`, { method: "PATCH", body: changes }),
     onSuccess: () => invalidate(keys.users, keys.me),
+  });
+}
+
+/** The user's pending write requests from MCP clients; polled so a new one shows up while they watch. */
+export function useApprovals() {
+  return useQuery({
+    queryKey: keys.approvals,
+    queryFn: () => api<WriteApproval[]>("/approvals"),
+    refetchInterval: POLL_MS,
+  });
+}
+
+export function useDecideApproval() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, approve }: { id: string; approve: boolean }) =>
+      api<void>(`/approvals/${id}/${approve ? "approve" : "deny"}`, { method: "POST" }),
+    onSuccess: () => invalidate(keys.approvals),
   });
 }

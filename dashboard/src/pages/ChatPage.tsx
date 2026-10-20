@@ -1,3 +1,4 @@
+import { ToolHints } from "@/components/ToolHints";
 import {
   Bot,
   ChevronRight,
@@ -115,6 +116,7 @@ function ConfirmCard({
         {items.map((c) => (
           <li key={c.id} className="rounded-md border bg-background p-2 text-xs">
             <code className="font-medium">{c.name}</code>
+            <ToolHints info={c.info} />
             <pre className="mt-1 max-h-32 overflow-auto font-mono whitespace-pre-wrap text-muted-foreground">
               {JSON.stringify(c.args, null, 2)}
             </pre>

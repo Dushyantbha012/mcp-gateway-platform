@@ -25,4 +25,5 @@ export const OUTCOME: Record<AuditOutcome, { label: string; className: string }>
   unreachable: { label: "Unreachable", className: DANGER },
   rejected: { label: "Rejected", className: NEUTRAL },
   denied: { label: "Denied", className: "bg-info-soft text-info" },
+  held: { label: "Awaiting approval", className: WARNING },
 };

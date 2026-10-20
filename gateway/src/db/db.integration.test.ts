@@ -43,6 +43,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "005_drop_credential_ciphertext",
       "006_audit_request_id",
       "007_audit_detail",
+      "008_write_approvals",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -58,6 +59,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "sessions",
       "tool_permissions",
       "users",
+      "write_approvals",
     ]);
   });
 
@@ -75,6 +77,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "005_drop_credential_ciphertext",
       "006_audit_request_id",
       "007_audit_detail",
+      "008_write_approvals",
     ]);
   });
 });

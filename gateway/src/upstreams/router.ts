@@ -3,6 +3,7 @@ import { writeAudit } from "../audit/writer.js";
 import type { Principal } from "../db/apiKeys.js";
 import type { Db } from "../db/db.js";
 import type { AuditOutcome, AuditSource, McpServer } from "../db/schema.js";
+import { gateWrite } from "../db/approvals.js";
 import { rulesFor } from "../db/permissions.js";
 import { listServers, recordServerHealth } from "../db/servers.js";
 import { noopMetrics, type Metrics } from "../metrics/metrics.js";
@@ -11,6 +12,16 @@ import { currentRequestId } from "../requestContext.js";
 import { UpstreamError } from "./connection.js";
 import { buildToolIndex, slugOf, type ToolIndex } from "./naming.js";
 import type { UpstreamRegistry } from "./registry.js";
+
+/** A tool as an approval prompt describes it. */
+export interface ToolInfo {
+  name: string;
+  server: string;
+  description: string;
+  readOnly: boolean;
+  destructive?: boolean;
+  idempotent?: boolean;
+}
 
 export interface CallContext {
   principal: Principal;
@@ -44,6 +55,11 @@ export class ToolRouter {
     private readonly metrics: Metrics = noopMetrics,
     /** What members may use when no rule matches; see `decide`. */
     readonly memberDefault: MemberDefault = "allowAll",
+    /**
+     * Hold every write an MCP client calls until its user approves it in the
+     * dashboard (see `gateWrite`). Chat has its own prompt, so it isn't held here.
+     */
+    private readonly holdMcpWrites = false,
   ) {}
 
   /**
@@ -79,6 +95,27 @@ export class ToolRouter {
   async isReadOnly(name: string): Promise<boolean | undefined> {
     const enabled = (await listServers(this.db)).filter((s) => s.enabled);
     return indexOf(enabled).routes.get(name)?.readOnly;
+  }
+
+  /**
+   * What the approval prompts show about a tool: the upstream's own description and
+   * hints, so the user judges the tool and not just the arguments the model chose.
+   */
+  async describeTool(name: string): Promise<ToolInfo | undefined> {
+    const enabled = (await listServers(this.db)).filter((s) => s.enabled);
+    const index = indexOf(enabled);
+    const route = index.routes.get(name);
+    const tool = index.tools.find((t) => t.name === name);
+    if (!route || !tool) return undefined;
+    const hints = tool.annotations ?? {};
+    return {
+      name,
+      server: route.slug,
+      description: tool.description ?? "",
+      readOnly: route.readOnly,
+      destructive: hints.destructiveHint,
+      idempotent: hints.idempotentHint,
+    };
   }
 
   /**
@@ -166,6 +203,19 @@ export class ToolRouter {
       ) {
         const message = `You don't have permission to use '${name}'`;
         return finish("denied", errorResult(message), server.slug, message);
+      }
+    }
+
+    if (this.holdMcpWrites && ctx.source === "mcp" && !route.readOnly) {
+      const gate = await gateWrite(this.db, ctx.principal.userId, name, args);
+      if (gate.kind !== "run") {
+        const message =
+          gate.kind === "denied"
+            ? `The user declined '${name}' (request ${gate.id}). Do not retry it unless they ask again.`
+            : `'${name}' changes data, so the user must approve it first (request ${gate.id}). ` +
+              `Tell them to open Approvals in the gateway dashboard, check the arguments and ` +
+              `approve; then call it again with the same arguments.`;
+        return finish("held", errorResult(message), server.slug, message);
       }
     }
 

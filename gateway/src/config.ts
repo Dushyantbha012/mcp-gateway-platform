@@ -114,6 +114,8 @@ const schema = z
     CHAT_TURNS_PER_MINUTE: z.coerce.number().int().min(1).default(6),
     // Hold chat tool calls that change data until the user approves them.
     CHAT_CONFIRM_WRITES: envBooleanDefaultOn,
+    // Hold writes called by MCP clients until the user approves them in the dashboard.
+    MCP_CONFIRM_WRITES: envBooleanDefaultOn,
     // Reverse proxies (Traefik) in front of the gateway, for the client IP
     // used by the login rate limit.
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
@@ -191,6 +193,8 @@ export interface Config {
   metricsEnabled: boolean;
   searchMode: SearchMode;
   memberDefault: MemberDefault;
+  /** Writes from MCP clients wait for the user's approval in the dashboard. */
+  mcpConfirmWrites: boolean;
   /** With searchMode "auto": meta-tools only above this many visible tools. */
   searchAutoThreshold: number;
   ssrfAllowedHosts: string[];
@@ -248,6 +252,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     metricsEnabled: e.METRICS_ENABLED,
     searchMode: e.SEARCH_MODE,
     memberDefault: e.MEMBER_DEFAULT_POLICY,
+    mcpConfirmWrites: e.MCP_CONFIRM_WRITES,
     searchAutoThreshold: e.SEARCH_AUTO_THRESHOLD,
     ssrfAllowedHosts: e.SSRF_ALLOWED_HOSTS,
     upstreamSecretsNamespace: e.UPSTREAM_SECRETS_NAMESPACE,

@@ -1,4 +1,4 @@
-import type { ChatEvent } from "@/api/types";
+import type { ChatEvent, ToolHints } from "@/api/types";
 
 export interface ToolRun {
   id: string;
@@ -13,6 +13,7 @@ export interface Confirmation {
   id: string;
   name: string;
   args: unknown;
+  info?: ToolHints;
 }
 
 export interface Turn {
@@ -60,7 +61,7 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
         ...turn,
         confirmations: [
           ...(turn.confirmations ?? []),
-          { id: event.id, name: event.name, args: event.args },
+          { id: event.id, name: event.name, args: event.args, info: event.info },
         ],
       };
     case "error":

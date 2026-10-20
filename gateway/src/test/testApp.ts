@@ -36,6 +36,8 @@ export function buildTestApp(
     ssrf?: SsrfPolicy;
     /** Serve /metrics, as index.ts does unless METRICS_ENABLED=false. */
     metrics?: boolean;
+    /** Hold MCP writes until approved in the dashboard (the production default). */
+    holdMcpWrites?: boolean;
   } = {},
 ) {
   const credentials = new MemoryCredentialStore();
@@ -43,7 +45,7 @@ export function buildTestApp(
   const registry = new UpstreamRegistry(credentials, { maxResultBytes: 100_000, ssrf });
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const metrics = opts.metrics ? new GatewayMetrics(() => listServers(db)) : undefined;
-  const router = new ToolRouter(db, registry, metrics);
+  const router = new ToolRouter(db, registry, metrics, "allowAll", opts.holdMcpWrites);
   const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
   const deps = {
     db,

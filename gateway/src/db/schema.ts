@@ -8,7 +8,7 @@ export type Role = "admin" | "member";
 export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "unknown";
 export type AuditOutcome =
-  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
 export type AuditSource = "mcp" | "chat";
 
 export interface UsersTable {
@@ -104,6 +104,19 @@ export interface ToolPermissionsTable {
   created_at: CreatedAt;
 }
 
+export interface WriteApprovalsTable {
+  id: Generated<string>;
+  user_id: string;
+  tool_name: string;
+  args: unknown;
+  args_hash: string;
+  status: Generated<"pending" | "approved" | "denied">;
+  created_at: CreatedAt;
+  decided_at: Date | null;
+  expires_at: Date;
+  used_at: Date | null;
+}
+
 export interface Database {
   users: UsersTable;
   api_keys: ApiKeysTable;
@@ -112,6 +125,7 @@ export interface Database {
   sessions: SessionsTable;
   invites: InvitesTable;
   tool_permissions: ToolPermissionsTable;
+  write_approvals: WriteApprovalsTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -122,5 +136,6 @@ export type McpServer = Selectable<McpServersTable>;
 export type NewMcpServer = Insertable<McpServersTable>;
 export type McpServerUpdate = Updateable<McpServersTable>;
 export type ToolPermissionRow = Selectable<ToolPermissionsTable>;
+export type WriteApproval = Selectable<WriteApprovalsTable>;
 export type AuditEntry = Selectable<AuditLogTable>;
 export type NewAuditEntry = Insertable<AuditLogTable>;

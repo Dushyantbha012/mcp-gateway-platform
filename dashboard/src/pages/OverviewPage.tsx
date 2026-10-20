@@ -63,6 +63,7 @@ const OUTCOME_COLOR: Record<string, string> = {
   unreachable: "var(--chart-4)",
   rejected: "var(--muted-foreground)",
   denied: "var(--chart-5)",
+  held: "var(--chart-1)",
 };
 
 const SECTION = "animate-in fade-in slide-in-from-bottom-2 fill-mode-both";
