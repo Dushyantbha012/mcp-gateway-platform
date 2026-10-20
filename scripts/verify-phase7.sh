@@ -83,16 +83,45 @@ for slug in ("woocommerce", "deepwiki", "github"):
 assert s["github"]["hasCredential"] and not s["deepwiki"]["hasCredential"]
 print("ok: 3 upstreams connected (tools: %s)" % ", ".join("%s=%d" % (k, len(s[k]["tools"])) for k in ("woocommerce", "deepwiki", "github")))'
 
-step "The read-only GitHub token cannot write (defence in depth: Phase 7 permissions hide write tools from members too)"
-ADMIN_KEY="$ADMIN_KEY" node --input-type=module -e '
+step "A write is held by the gateway, and once approved the read-only GitHub token still cannot write"
+# Two layers, tested one at a time: the gateway's approval gate (admins too), then GitHub's own refusal.
+call_write() {
+  ADMIN_KEY="$ADMIN_KEY" node --input-type=module -e '
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-const c = new Client({ name: "verify6", version: "1" });
+const c = new Client({ name: "verify7", version: "1" });
 await c.connect(new StreamableHTTPClientTransport(new URL(process.argv[1] + "/mcp"), { requestInit: { headers: { Authorization: "Bearer " + process.env.ADMIN_KEY } } }));
-const r = await c.callTool({ name: "github__create_repository", arguments: { name: "verify6-must-not-exist" } });
+const r = await c.callTool({ name: "github__create_repository", arguments: { name: "verify7-must-not-exist" } });
 await c.close();
-if (!r.isError) { console.error("create_repository SUCCEEDED: the token is not read-only"); process.exit(1); }
-console.log("ok: write rejected by GitHub:", r.content[0].text.slice(0, 90));' "$GW" 2>&1 | grep -v ExperimentalWarning ||
+console.log(JSON.stringify({ isError: !!r.isError, text: r.content?.[0]?.text ?? "" }));' "$GW" 2>&1 | grep -v ExperimentalWarning
+}
+first=$(call_write)
+python3 -c '
+import json, sys
+r = json.loads(sys.argv[1])
+assert r["isError"] and "approve" in r["text"], "the write was not held: " + r["text"][:120]
+print("ok: held by the gateway:", r["text"][:90])' "$first" || fail "the gateway did not hold the write"
+
+ADMIN_JAR=$(mktemp)
+trap 'rm -f "$ADMIN_JAR"' EXIT
+curl -sf -c "$ADMIN_JAR" -X POST -H "Origin: $DASH" -H "Content-Type: application/json" \
+  -d "{\"email\":\"$(secret gateway-bootstrap-admin email)\",\"password\":\"$(secret gateway-bootstrap-admin password)\"}" \
+  "$GW/api/auth/login" >/dev/null || fail "could not log in as the admin to approve"
+REQ_ID=$(curl -sf -b "$ADMIN_JAR" -H "Origin: $DASH" "$GW/api/approvals" | python3 -c '
+import json, sys
+rows = [r for r in json.load(sys.stdin) if r["name"] == "github__create_repository"]
+print(rows[0]["id"])') || fail "no pending approval for github__create_repository"
+curl -sf -b "$ADMIN_JAR" -H "Origin: $DASH" -X POST "$GW/api/approvals/$REQ_ID/approve" >/dev/null ||
+  fail "approving request $REQ_ID failed"
+
+second=$(call_write)
+python3 -c '
+import json, sys
+r = json.loads(sys.argv[1])
+t = r["text"]
+assert r["isError"], "create_repository SUCCEEDED: the token is not read-only"
+assert "approve" not in t and "declined" not in t, "still held by the gateway, so GitHub was never asked: " + t[:120]
+print("ok: after approval, GitHub itself rejected the write:", t[:90])' "$second" ||
   fail "the GitHub token is not read-only; create a token with read permissions only"
 
 step "System suite: the full definition of done, scripted (storefront, chat as A, client as B, revoke, disable, kill, audit)"
