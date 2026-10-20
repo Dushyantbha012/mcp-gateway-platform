@@ -4,6 +4,8 @@
 .git
 .github
 helm
+# ...except the store bootstrap scripts, which the provisioner ships in the gateway image.
+!helm/charts/store/files
 scripts
 **/*.md
 .env
