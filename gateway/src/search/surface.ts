@@ -101,6 +101,11 @@ export class ToolSurface {
     return this.router.callTool(ctx, name, args);
   }
 
+  /** See `ToolRouter.isReadOnly`; the chat agent asks before running a tool that isn't. */
+  isReadOnly(name: string): Promise<boolean | undefined> {
+    return this.router.isReadOnly(name);
+  }
+
   private useSearch(toolCount: number, override?: SurfaceOverride): boolean {
     if (override) return override === "search";
     switch (this.options.mode) {

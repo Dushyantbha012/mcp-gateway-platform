@@ -8,18 +8,43 @@ import type { ToolSurface, SearchMode } from "../search/surface.js";
 import { log } from "../logger.js";
 import { HttpError, parse } from "./errors.js";
 
-export interface ChatSetup {
+/** A model the user can pick for a chat. */
+export interface ChatProvider {
+  id: string;
+  model: string;
   llm: LlmClient;
+  /** Limits that suit this provider (a small tokens-per-minute cap wants smaller results). */
+  limits?: Partial<AgentLimits>;
+}
+
+export interface ChatSetup {
+  /** The model used unless the request names another of `providers`. */
+  llm: LlmClient;
+  /** Every selectable provider (omit for just `llm`) and which one is the default. */
+  providers?: ChatProvider[];
+  defaultProvider?: string;
   limits?: Partial<AgentLimits>;
   /** Turns one user may start per minute: each turn costs several LLM requests. */
   turnsPerMinute: number;
   /** Whether the model gets every tool or search_tools + call_tool; default off. */
   searchMode?: SearchMode;
+  /**
+   * Hold every tool that isn't marked read-only until the user approves it in the
+   * dashboard (the turn ends with a `confirm` event); default off.
+   */
+  confirmWrites?: boolean;
   searchAutoThreshold?: number;
   now?: () => Date;
 }
 
 const bodySchema = z.object({
+  /** Writes the user approved after a `confirm` event: each lets one identical call through. */
+  approved: z
+    .array(z.object({ name: z.string().min(1).max(200), args: z.record(z.string(), z.unknown()) }))
+    .max(10)
+    .optional(),
+  /** One of the ids from GET /api/meta `chatProviders`; omitted = the default. */
+  provider: z.string().min(1).max(32).optional(),
   messages: z
     .array(
       z.object({
@@ -51,8 +76,25 @@ export function chatApi(tools: ToolSurface, setup: ChatSetup | undefined) {
     if (!setup) {
       throw new HttpError(503, "chat_not_configured", "The chat agent is not configured.");
     }
-    const { messages } = parse(bodySchema, req.body);
+    const { messages, provider, approved } = parse(bodySchema, req.body);
     const principal = principalOf(res);
+    let llm = setup.llm;
+    let limits = setup.limits;
+    // The default provider's own limits apply when none is named.
+    const defaults = setup.providers?.find((p) => p.id === setup.defaultProvider);
+    if (provider === undefined && defaults) limits = { ...limits, ...defaults.limits };
+    if (provider !== undefined) {
+      const chosen = setup.providers?.find((p) => p.id === provider);
+      if (!chosen) {
+        throw new HttpError(
+          400,
+          "unknown_provider",
+          `Chat provider '${provider}' is not available.`,
+        );
+      }
+      llm = chosen.llm;
+      limits = { ...limits, ...chosen.limits };
+    }
 
     const wait = turns.retryAfterMs(principal.userId);
     if (wait > 0) {
@@ -79,9 +121,13 @@ export function chatApi(tools: ToolSurface, setup: ChatSetup | undefined) {
       const events = runAgent(
         messages,
         {
-          llm: setup.llm,
-          limits: setup.limits,
+          llm,
+          limits,
           now: setup.now,
+          approved,
+          needsConfirmation: setup.confirmWrites
+            ? async (name) => (await tools.isReadOnly(name)) === false
+            : undefined,
           listTools: () => tools.listTools(principal),
           callTool: (name, args) => tools.callTool({ principal, source: "chat" }, name, args),
         },

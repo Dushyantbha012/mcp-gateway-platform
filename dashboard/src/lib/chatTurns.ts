@@ -8,11 +8,23 @@ export interface ToolRun {
   result?: { isError: boolean; summary: string; durationMs: number };
 }
 
+/** A write the assistant wants to run and the user has yet to approve. */
+export interface Confirmation {
+  id: string;
+  name: string;
+  args: unknown;
+}
+
 export interface Turn {
   id: number;
   role: "user" | "assistant";
   text: string;
+  /** What the model is sent instead of `text`, when they differ (e.g. an approval with its arguments). */
+  modelText?: string;
   tools: ToolRun[];
+  /** Writes waiting for the user; `decision` is set once they answered. */
+  confirmations?: Confirmation[];
+  decision?: "approved" | "denied";
   error?: string;
   stopped?: boolean;
 }
@@ -42,6 +54,14 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
               }
             : t,
         ),
+      };
+    case "confirm":
+      return {
+        ...turn,
+        confirmations: [
+          ...(turn.confirmations ?? []),
+          { id: event.id, name: event.name, args: event.args },
+        ],
       };
     case "error":
       return { ...turn, error: event.message };

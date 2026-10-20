@@ -21,7 +21,7 @@ cluster and a production-like k3s VPS. File paths are relative to the repo root.
 | Store | WordPress + WooCommerce + MySQL (StatefulSet + PVC), bootstrap Job installs and seeds it | `helm/charts/store` |
 | WooCommerce MCP server | Our own MCP server, 5 tools, Streamable HTTP, ClusterIP only | `woocommerce-mcp/`, `helm/charts/store/templates/woocommerce-mcp.yaml` |
 | Gateway + dashboard | Express + Kysely/Postgres; MCP client to every upstream, one MCP server for everyone; React dashboard | `gateway/`, `dashboard/`, `helm/charts/gateway`, `helm/charts/dashboard` |
-| Chat agent | A tool loop (Gemini) inside the gateway that calls tools through the same router as `/mcp`, as the logged-in user | `gateway/src/chat/` |
+| Chat agent | A tool loop (Groq gpt-oss-120b by default, or Gemini; user-switchable) inside the gateway that calls tools through the same router as `/mcp`, as the logged-in user | `gateway/src/chat/` |
 
 Nothing but the gateway talks to an upstream. The chat agent is not a separate
 client: it calls `ToolRouter` in-process with the user's identity, so there is
@@ -95,6 +95,7 @@ because a sanitised name cannot be reversed (`gateway/src/upstreams/naming.ts`).
   `readOnlyHint: true`; admins grant writes with an Allow rule (per user or for
   all members). The same `decide()` drives `tools/list`, `tools/call`, the chat
   agent and the admin preview, so they cannot disagree.
+- **Chat approvals:** with `gateway.chat.confirmWrites` (default on) the agent loop never runs a tool whose upstream hasn't marked it `readOnlyHint`: it emits a `confirm` event and ends the turn. The stateless API means the browser re-sends the history with `approved: [{name, args}]`; each entry releases one call with identical arguments, so a model can't smuggle in different ones. Held calls are not audited (nothing ran); the approved one is, as a normal chat call.
 - **Audit:** every `tools/call` (MCP or chat) is recorded; gateway-level
   `search_tools` calls are recorded too, with the query, no server and the match
   count. `tools/list` is not audited (it changes nothing and would drown the log).
@@ -118,7 +119,7 @@ sets are better served by listing them.
 | Health-checked tool cache | Listing is instant and independent of upstreams. | A tool added upstream appears after the next health pass (≤ 15 s) or a manual refresh. |
 | Read-only member default | A shared team gateway should not let any member create products or write to GitHub by default. | Upstreams without `readOnlyHint` look like write tools and must be allowed explicitly. |
 | Chat history in the browser | No new tables, any replica serves any turn. | Refreshing the page starts a new conversation. |
-| Gemini free tier, plain `fetch` | Free; the brief grades the tool loop, not the model. | Daily quota; every loop step is one request. |
+| Chat model: Groq `openai/gpt-oss-120b` by default, Gemini as an alternative, both via plain `fetch` behind one `LlmClient` interface | The brief grades the tool loop, not the model; Groq is fast and has tool calling, Gemini needs no extra account. Switching is a Helm value (`gateway.chat.provider`) or the chat page's Model menu, with no change to routing, permissions or audit. | Free tiers are rate limited; every loop step is one request, so search mode (fewer tool schemas per step) stays on for chat. |
 | Writing the Helm charts from scratch (no Bitnami) | Every resource can be explained. | More YAML to maintain. |
 
 ## 8. Local → production (k3s VPS)

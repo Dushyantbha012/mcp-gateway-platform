@@ -6,6 +6,12 @@ export interface ChatMessage {
   text: string;
 }
 
+/** A write the user has approved in the dashboard: that tool, with exactly these arguments, once. */
+export interface ApprovedCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -68,6 +74,8 @@ export type ChatEvent =
       summary: string;
       durationMs: number;
     }
+  /** A write tool the model wants to run: held until the user approves it (the turn ends here). */
+  | { type: "confirm"; id: string; name: string; server: string | null; args: unknown }
   | { type: "text"; text: string }
   | { type: "done"; steps: number }
   | { type: "error"; code: string; message: string };

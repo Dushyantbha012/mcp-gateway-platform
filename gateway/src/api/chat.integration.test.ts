@@ -87,6 +87,209 @@ describe.skipIf(!hasTestDb)("POST /api/chat", () => {
     docs.behavior = "ok";
   });
 
+  describe("approving writes", () => {
+    let store: FakeUpstream;
+    let guarded: ReturnType<typeof buildTestApp>;
+    let user: Awaited<ReturnType<typeof userWithKey>>;
+    const create = { name: "store__create_product", args: { value: "Mug" } };
+
+    beforeAll(async () => {
+      store = await startFakeUpstream({
+        toolNames: ["list_orders", "create_product"],
+        readOnlyTools: ["list_orders"],
+      });
+      await insertServer(t.db, { slug: "store", name: "Store", url: store.url, timeout_ms: 2_000 });
+      guarded = buildTestApp(
+        t.db,
+        {},
+        {
+          chat: {
+            llm: { generate: (req) => llm.generate(req) },
+            turnsPerMinute: 1000,
+            limits: { turnTimeoutMs: 5_000 },
+            confirmWrites: true,
+          },
+        },
+      );
+      await guarded.health.checkAll();
+      user = await userWithKey(t.db, "erin@example.com", "member");
+    });
+    afterAll(async () => {
+      await guarded?.registry.closeAll();
+      await store?.close();
+    });
+
+    const turn = (body: Record<string, unknown>) =>
+      request(guarded.app)
+        .post("/api/chat")
+        .set("Authorization", `Bearer ${user.key}`)
+        .buffer(true)
+        .parse(asText)
+        .send({ messages: ask("make a mug"), ...body });
+
+    it("holds a write until the user approves, then runs it once", async () => {
+      script([
+        { text: "", calls: [{ id: "a", name: create.name, args: create.args }] },
+        { text: "", calls: [{ id: "b", name: create.name, args: create.args }] },
+        say("Created."),
+      ]);
+      const held = parseSse((await turn({})).body);
+      expect(held.map((e) => e.type)).toEqual(["confirm", "done"]);
+      expect(store.calls.create_product ?? 0).toBe(0);
+      // Nothing ran, so nothing is in the audit log for it.
+      expect((await audit("erin@example.com")).length).toBe(0);
+
+      const done = parseSse((await turn({ approved: [create] })).body);
+      expect(done.map((e) => e.type)).toEqual(["tool_call", "tool_result", "text", "done"]);
+      expect(store.calls.create_product).toBe(1);
+      expect((await audit("erin@example.com")).map((r) => r.tool_name)).toEqual([create.name]);
+    });
+
+    it("lets a read-only tool run without asking", async () => {
+      script([
+        { text: "", calls: [{ id: "a", name: "store__list_orders", args: {} }] },
+        say("None."),
+      ]);
+      const events = parseSse((await turn({})).body);
+      expect(events.map((e) => e.type)).toEqual(["tool_call", "tool_result", "text", "done"]);
+    });
+
+    it("an approval for other arguments does not release the write", async () => {
+      script([{ text: "", calls: [{ id: "a", name: create.name, args: create.args }] }]);
+      const events = parseSse(
+        (await turn({ approved: [{ name: create.name, args: { value: "Other" } }] })).body,
+      );
+      expect(events.map((e) => e.type)).toEqual(["confirm", "done"]);
+    });
+  });
+
+  describe("switching the model provider", () => {
+    const used: string[] = [];
+    let switchable: ReturnType<typeof buildTestApp>;
+    const mark = (id: string) => ({
+      generate: () => {
+        used.push(id);
+        return Promise.resolve({ text: `from ${id}`, calls: [] });
+      },
+    });
+
+    beforeAll(async () => {
+      switchable = buildTestApp(
+        t.db,
+        {},
+        {
+          chat: {
+            llm: mark("groq"),
+            defaultProvider: "groq",
+            providers: [
+              { id: "groq", model: "openai/gpt-oss-120b", llm: mark("groq") },
+              { id: "gemini", model: "gemini-test", llm: mark("gemini") },
+            ],
+            turnsPerMinute: 1000,
+            limits: { turnTimeoutMs: 5_000 },
+          },
+        },
+      );
+    });
+    afterAll(async () => switchable?.registry.closeAll());
+    beforeEach(() => {
+      used.length = 0;
+    });
+
+    const send = (body: Record<string, unknown>) =>
+      request(switchable.app)
+        .post("/api/chat")
+        .set("Authorization", `Bearer ${alice.key}`)
+        .buffer(true)
+        .parse(asText)
+        .send({ messages: ask("hi"), ...body });
+
+    it("uses the default provider when none is named", async () => {
+      const res = await send({});
+      expect(parseSse(res.body as string).find((e) => e.type === "text")).toMatchObject({
+        text: "from groq",
+      });
+      expect(used).toEqual(["groq"]);
+    });
+
+    it("uses the provider the user picked", async () => {
+      const res = await send({ provider: "gemini" });
+      expect(parseSse(res.body as string).find((e) => e.type === "text")).toMatchObject({
+        text: "from gemini",
+      });
+      expect(used).toEqual(["gemini"]);
+    });
+
+    it("refuses a provider that isn't configured, before any model call", async () => {
+      const res = await request(switchable.app)
+        .post("/api/chat")
+        .set("Authorization", `Bearer ${alice.key}`)
+        .send({ messages: ask("hi"), provider: "openai" });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("unknown_provider");
+      expect(used).toEqual([]);
+    });
+
+    it("applies the chosen provider's own limits to the turn", async () => {
+      // Each provider's tool results are cut to its own size before the model sees them.
+      const seenResult: Record<string, string> = {};
+      const probe = (id: string) => ({
+        generate: (req: { turns: { role: string; results?: { output: string }[] }[] }) => {
+          const last = req.turns.at(-1);
+          if (last?.role === "tool") {
+            seenResult[id] = last.results![0]!.output;
+            return Promise.resolve({ text: "done", calls: [] });
+          }
+          return Promise.resolve({
+            text: "",
+            calls: [{ id: "c1", name: "shop__big", args: { bytes: 5000 } }],
+          });
+        },
+      });
+      const limited = buildTestApp(
+        t.db,
+        {},
+        {
+          chat: {
+            llm: probe("groq"),
+            defaultProvider: "groq",
+            providers: [
+              { id: "groq", model: "m", llm: probe("groq"), limits: { maxResultChars: 1000 } },
+              { id: "gemini", model: "g", llm: probe("gemini") },
+            ],
+            turnsPerMinute: 1000,
+            limits: { turnTimeoutMs: 5_000 },
+          },
+        },
+      );
+      await limited.health.checkAll();
+      const run = (body: Record<string, unknown>) =>
+        request(limited.app)
+          .post("/api/chat")
+          .set("Authorization", `Bearer ${alice.key}`)
+          .buffer(true)
+          .parse(asText)
+          .send({ messages: ask("big"), ...body });
+      await run({});
+      await run({ provider: "gemini" });
+      await limited.registry.closeAll();
+      expect(seenResult.groq!.length).toBeLessThan(1200);
+      expect(seenResult.groq).toContain("[truncated");
+      expect(seenResult.gemini!.length).toBeGreaterThan(4000);
+    });
+
+    it("lists the choices and the default in /api/meta", async () => {
+      const res = await request(switchable.app)
+        .get("/api/meta")
+        .set("Authorization", `Bearer ${alice.key}`);
+      expect(res.body.chatProviders).toEqual([
+        { id: "groq", model: "openai/gpt-oss-120b" },
+        { id: "gemini", model: "gemini-test" },
+      ]);
+      expect(res.body.chatProvider).toBe("groq");
+    });
+  });
+
   it("streams tool_call, tool_result, text, done - and audits the call as the caller", async () => {
     script([callTools({ name: "shop__echo", args: { value: "hi" } }), say("It said hi.")]);
     const res = await chat(alice.key, ask("echo hi"));

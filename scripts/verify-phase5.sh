@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Verification for Phase 5 (chat agent), against the live k3d cluster and the
-# real Gemini API. Re-runnable:
+# real chat model (Groq by default, else Gemini). Re-runnable:
 #   ./scripts/verify-phase5.sh                # tests, build, deploy, verify
 #   SKIP_DEPLOY=1 ./scripts/verify-phase5.sh  # reuse what's already deployed
 #   SKIP_TESTS=1 ...                          # skip the repo test suites (cluster checks only)
 #   SKIP_REGRESSION=1 ...                     # skip re-running the Phase 2-4 scripts
 #
-# The Gemini key is read from $GEMINI_API_KEY, or ~/.config/urumi/gemini.env,
-# or (with SKIP_DEPLOY) from the cluster's gateway-gemini Secret. The live
-# checks cost about ten requests of the key's daily quota.
+# The checks run against the gateway's default provider: Groq when the
+# gateway-groq Secret exists (unless CHAT_PROVIDER=gemini), otherwise Gemini.
+# Keys are read from $GROQ_API_KEY / $GEMINI_API_KEY, ~/.config/urumi/{groq,gemini}.env,
+# or (with SKIP_DEPLOY) from the cluster's gateway-groq / gateway-gemini Secret.
+# The live checks cost about ten model requests.
 #
 # Not automated here: placing the storefront order by hand (the brief's DoD
 # step). Phase 6's Playwright storefront automation covers it; until then do
@@ -33,8 +35,18 @@ secret() { kubectl -n "$NS" get secret "$1" -o jsonpath="{.data.$2}" | base64 -d
 jsonget() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 login_body() { printf '{"email":"%s","password":"%s"}' "$1" "$2"; }
 
-set_gemini_secret() { # value on stdin; never an argument
-  kubectl -n "$NS" create secret generic gateway-gemini --from-file=api-key=/dev/stdin \
+# The Secret, env var and name of the provider the gateway uses by default.
+CHAT_SECRET=gateway-gemini CHAT_ENV=GEMINI_API_KEY CHAT_NAME=Gemini
+pick_chat_provider() {
+  local want
+  want=$(kubectl -n "$NS" get deploy "$GATEWAY_DEPLOY" \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CHAT_PROVIDER")].value}' 2>/dev/null || true)
+  if [ "$want" != "gemini" ] && kubectl -n "$NS" get secret gateway-groq >/dev/null 2>&1; then
+    CHAT_SECRET=gateway-groq CHAT_ENV=GROQ_API_KEY CHAT_NAME=Groq
+  fi
+}
+set_gemini_secret() { # value on stdin; never an argument (the default provider's Secret)
+  kubectl -n "$NS" create secret generic "$CHAT_SECRET" --from-file=api-key=/dev/stdin \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
 }
 # `rollout status` straight after `rollout restart` can return before the
@@ -70,9 +82,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -z "${GEMINI_API_KEY:-}" ] && [ -f "$HOME/.config/urumi/gemini.env" ]; then
-  set -a; . "$HOME/.config/urumi/gemini.env"; set +a
-fi
+for f in groq gemini; do
+  if [ -f "$HOME/.config/urumi/$f.env" ]; then set -a; . "$HOME/.config/urumi/$f.env"; set +a; fi
+done
 
 if [ -z "${SKIP_TESTS:-}" ]; then
   step "Lint, format, unit + integration tests (real Postgres), build"
@@ -92,8 +104,9 @@ helm lint helm -f helm/values-prod.yaml
 helm template "$RELEASE" helm -f helm/values-prod.yaml >/dev/null
 
 if [ -z "${SKIP_DEPLOY:-}" ]; then
-  [ -n "${GEMINI_API_KEY:-}" ] || kubectl -n "$NS" get secret gateway-gemini >/dev/null 2>&1 ||
-    fail "no Gemini key: set GEMINI_API_KEY or create ~/.config/urumi/gemini.env"
+  [ -n "${GROQ_API_KEY:-}${GEMINI_API_KEY:-}" ] || kubectl -n "$NS" get secret gateway-groq >/dev/null 2>&1 ||
+    kubectl -n "$NS" get secret gateway-gemini >/dev/null 2>&1 ||
+    fail "no chat key: set GROQ_API_KEY (or GEMINI_API_KEY), or create ~/.config/urumi/groq.env"
   step "Build images, import into k3d, deploy"
   for app in woocommerce-mcp gateway dashboard; do
     docker build -q -f "$app/Dockerfile" -t "mcp-gateway/$app:dev" . >/dev/null
@@ -104,18 +117,19 @@ if [ -z "${SKIP_DEPLOY:-}" ]; then
   kubectl -n "$NS" rollout restart "deployment/$RELEASE-store-woocommerce-mcp" "deployment/$GATEWAY_DEPLOY" "deployment/$RELEASE-dashboard"
 fi
 
-step "All workloads ready; the gateway has chat enabled"
+pick_chat_provider
+step "All workloads ready; the gateway has chat enabled ($CHAT_NAME)"
 for d in "$RELEASE-store-woocommerce-mcp" "$GATEWAY_DEPLOY" "$RELEASE-dashboard"; do
   kubectl -n "$NS" rollout status "deployment/$d" --timeout=300s
 done
 # Earlier scripts kill pods, so `logs deployment/...` may briefly pick a pod
 # that is starting or terminating: retry against fresh logs for up to a minute.
 for _ in $(seq 30); do
-  kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" 2>/dev/null | grep -q '"chat agent enabled"' && break
+  kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" --tail=2000 2>/dev/null | grep '"chat agent enabled"' >/dev/null && break
   sleep 2
 done
-kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" | grep -q '"chat agent enabled"' ||
-  fail "gateway log doesn't say 'chat agent enabled' (is secret/gateway-gemini present?)"
+kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" --tail=2000 | grep '"chat agent enabled"' >/dev/null ||
+  fail "gateway log doesn't say 'chat agent enabled' (is secret/$CHAT_SECRET present?)"
 echo "ok"
 
 ADMIN_EMAIL=$(secret gateway-bootstrap-admin email)
@@ -124,8 +138,23 @@ ADMIN_KEY=$(secret gateway-bootstrap-admin api-key)
 as_admin() { curl -s -b "$JAR_ADMIN" -c "$JAR_ADMIN" -H "Origin: $DASH" -H "Content-Type: application/json" "$DASH/api$1" "${@:2}"; }
 as_member() { curl -s -b "$JAR_MEMBER" -c "$JAR_MEMBER" -H "Origin: $DASH" -H "Content-Type: application/json" "$DASH/api$1" "${@:2}"; }
 status_of() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-chat_admin() { scripts/chat_stream.py "$DASH/api/chat" "$1" --cookie "$JAR_ADMIN" --origin "$DASH"; }
-chat_member() { scripts/chat_stream.py "$DASH/api/chat" "$1" --cookie "$JAR_MEMBER" --origin "$DASH"; }
+# Extra arguments pass through (--approve: act as the user who approves a held write).
+# Groq's free tier allows ~8000 tokens a minute, which a few consecutive turns
+# use up: a turn that ends in rate_limited is retried after the window passes.
+chat_as() { # jar, message, extra args...
+  local tmp try
+  tmp=$(mktemp)
+  for try in 1 2 3; do
+    scripts/chat_stream.py "$DASH/api/chat" "$2" --cookie "$1" --origin "$DASH" "${@:3}" >"$tmp"
+    grep -q '"code": *"rate_limited"' "$tmp" || break
+    echo "  (rate limited by the model provider; waiting 60s, try $try)" >&2
+    sleep 60
+  done
+  cat "$tmp"
+  rm -f "$tmp"
+}
+chat_admin() { chat_as "$JAR_ADMIN" "$@"; }
+chat_member() { chat_as "$JAR_MEMBER" "$@"; }
 # Prints the tool names the agent called, one per line, from chat_stream output in $OUT.
 called() { python3 -c '
 import json,sys
@@ -157,13 +186,17 @@ echo "ok"
 
 PRODUCT="Verify5 Mug $(date +%s)"
 step "Exit criterion 1: 'create a product named X priced Y' -> it is on the storefront; events are streamed through Traefik"
-chat_admin "Create a product named \"$PRODUCT\" priced 7.25" >"$OUT"
+chat_admin "Create a product named \"$PRODUCT\" priced 7.25" --approve >"$OUT"
 echo "events: $(event_types)"
 called | grep -qx "woocommerce__create_product" || fail "agent didn't call woocommerce__create_product: $(cat "$OUT")"
 python3 - "$OUT" <<'PY' || fail "events were not streamed incrementally"
 import json, sys
 ev = [json.loads(l) for l in open(sys.argv[1])]
 assert ev[-1]["type"] == "done", ev[-1]
+# The write was held first: asked about, and not run until the user approved.
+# (search_tools runs first in search mode, so look only at the write itself.)
+kinds = [e["type"] for e in ev if e.get("name") == "woocommerce__create_product" and e["type"] in ("confirm", "tool_call")]
+assert kinds[:2] == ["confirm", "tool_call"], f"write was not held for approval: {kinds}"
 call = next(e for e in ev if e["type"] == "tool_call")
 done = ev[-1]
 # The tool call must reach the client well before the turn finishes: if the
@@ -240,8 +273,8 @@ chat_admin "Using the WooCommerce store, what orders came in today?" >"$OUT"
 called | grep -q "^woocommerce__" || fail "chat didn't use WooCommerce after re-enable: $(called)"
 echo "ok"
 
-step "A rejected Gemini key: the turn ends with a clear error, the gateway stays Ready, the rest keeps working"
-SAVED_KEY=$(secret gateway-gemini api-key)
+step "A rejected $CHAT_NAME key: the turn ends with a clear error, the gateway stays Ready, the rest keeps working"
+SAVED_KEY=$(secret "$CHAT_SECRET" api-key)
 printf '%s' "not-a-real-key" | set_gemini_secret
 kubectl -n "$NS" rollout restart "deployment/$GATEWAY_DEPLOY" >/dev/null
 wait_gateway
@@ -263,20 +296,20 @@ chat_admin "hello" >"$OUT"
 grep -q '"type": *"done"' "$OUT" || fail "chat didn't recover after restoring the key: $(cat "$OUT")"
 echo "ok"
 
-step "The Gemini key is nowhere it shouldn't be: Helm release, pod spec, logs, API responses"
-GEMINI_VALUE=$(secret gateway-gemini api-key)
+step "The $CHAT_NAME key is nowhere it shouldn't be: Helm release, pod spec, logs, API responses"
+GEMINI_VALUE=$(secret "$CHAT_SECRET" api-key)
 leak=""
 helm get all "$RELEASE" -n "$NS" 2>/dev/null | grep -qF "$GEMINI_VALUE" && leak="helm release"
 kubectl -n "$NS" get deploy,pod -o yaml | grep -qF "$GEMINI_VALUE" && leak="$leak pod spec"
 kubectl -n "$NS" logs "deployment/$GATEWAY_DEPLOY" --tail=1000 | grep -qF "$GEMINI_VALUE" && leak="$leak gateway logs"
 { as_admin /meta; as_admin /tools; as_admin /servers; as_admin "/audit?limit=200"; cat "$OUT"; } | grep -qF "$GEMINI_VALUE" && leak="$leak API responses"
-[ -z "$leak" ] || fail "Gemini key found in:$leak"
+[ -z "$leak" ] || fail "$CHAT_NAME key found in:$leak"
 kubectl -n "$NS" get deploy "$GATEWAY_DEPLOY" -o json | python3 -c '
 import json,sys
 env = json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["env"]
-e = next(e for e in env if e["name"] == "GEMINI_API_KEY")
+e = next(e for e in env if e["name"] == sys.argv[1])
 assert "valueFrom" in e and "value" not in e, e
-print("ok: GEMINI_API_KEY comes from secretKeyRef only")'
+print("ok: " + sys.argv[1] + " comes from secretKeyRef only")' "$CHAT_ENV"
 
 if [ -z "${SKIP_REGRESSION:-}" ]; then
   step "Regression: Phase 2, 3 and 4 checks against the same deployment"

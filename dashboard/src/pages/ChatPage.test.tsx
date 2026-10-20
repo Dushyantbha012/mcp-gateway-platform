@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { ChatEvent, ChatMessage } from "@/api/types";
@@ -300,5 +301,132 @@ describe("applyEvent", () => {
     t = applyEvent(t, { ...call, id: "c2" });
     t = applyEvent(t, { ...result, id: "c2" });
     expect(t.tools.map((x) => x.result !== undefined)).toEqual([false, true]);
+  });
+
+  describe("choosing the model", () => {
+    const withProviders = (chatProviders: unknown[], chatProvider: string) =>
+      server.use(
+        http.get("/api/meta", () =>
+          HttpResponse.json({ mcpUrl: null, chatEnabled: true, chatProviders, chatProvider }),
+        ),
+      );
+    const providers = [
+      { id: "groq", model: "openai/gpt-oss-120b" },
+      { id: "gemini", model: "gemini-3.5-flash-lite" },
+    ];
+
+    it("shows no selector when only one model is available", async () => {
+      loggedInAs(admin);
+      withProviders([providers[0]], "groq");
+      renderApp("/chat");
+      await screen.findByLabelText("Message");
+      expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
+    });
+
+    it("defaults to the gateway's model and sends the one the user picks", async () => {
+      const user = userEvent.setup();
+      let sent: unknown;
+      loggedInAs(admin);
+      withProviders(providers, "groq");
+      server.use(
+        http.post("/api/chat", async ({ request }) => {
+          sent = await request.json();
+          return streamOf([
+            { type: "text", text: "ok" },
+            { type: "done", steps: 1 },
+          ]);
+        }),
+      );
+      renderApp("/chat");
+      const select = await screen.findByRole("combobox", { name: "Model" });
+      await waitFor(() => expect(select).toHaveValue("groq"));
+      expect(
+        within(select).getByRole("option", { name: "Groq · openai/gpt-oss-120b" }),
+      ).toBeInTheDocument();
+
+      await user.selectOptions(select, "gemini");
+      await user.type(screen.getByLabelText("Message"), "hi{Enter}");
+      await waitFor(() => expect(sent).toMatchObject({ provider: "gemini" }));
+
+      // A second chat with the picked model still uses it.
+      await user.type(screen.getByLabelText("Message"), "again{Enter}");
+      await waitFor(() => expect(sent).toMatchObject({ provider: "gemini" }));
+    });
+
+    it("sends the default provider when the user doesn't pick", async () => {
+      const user = userEvent.setup();
+      let sent: unknown;
+      loggedInAs(admin);
+      withProviders(providers, "groq");
+      server.use(
+        http.post("/api/chat", async ({ request }) => {
+          sent = await request.json();
+          return streamOf([
+            { type: "text", text: "ok" },
+            { type: "done", steps: 1 },
+          ]);
+        }),
+      );
+      renderApp("/chat");
+      await screen.findByRole("combobox", { name: "Model" });
+      await user.type(await screen.findByLabelText("Message"), "hi{Enter}");
+      await waitFor(() => expect(sent).toMatchObject({ provider: "groq" }));
+    });
+  });
+
+  describe("approving writes", () => {
+    const create = { name: "woocommerce__create_product", args: { name: "Mug", price: "9" } };
+    const held: ChatEvent[] = [
+      { type: "confirm", id: "c1", name: create.name, server: "woocommerce", args: create.args },
+      { type: "done", steps: 1 },
+    ];
+
+    function twoTurns(bodies: Record<string, unknown>[]) {
+      server.use(
+        http.post("/api/chat", async ({ request }) => {
+          bodies.push((await request.json()) as Record<string, unknown>);
+          return bodies.length === 1
+            ? streamOf(held)
+            : streamOf([
+                { type: "text", text: "Done." },
+                { type: "done", steps: 1 },
+              ]);
+        }),
+      );
+    }
+
+    it("shows what would run, and sends the approval with its arguments", async () => {
+      const bodies: Record<string, unknown>[] = [];
+      twoTurns(bodies);
+      const { user, box } = await openChat();
+      await user.type(box, "make a mug{Enter}");
+
+      const card = await screen.findByRole("region", { name: "Approval needed" });
+      expect(within(card).getByText(create.name)).toBeInTheDocument();
+      expect(card).toHaveTextContent('"price": "9"');
+      // Nothing was approved by merely asking.
+      expect(bodies[0]).not.toHaveProperty("approved");
+
+      await user.click(within(card).getByRole("button", { name: "Approve" }));
+      expect(await screen.findByText("Done.")).toBeInTheDocument();
+      expect(bodies[1].approved).toEqual([create]);
+      const messages = bodies[1].messages as ChatMessage[];
+      expect(messages.at(-1)?.text).toContain(JSON.stringify(create.args));
+      // The conversation shows the short form, and the buttons are gone.
+      expect(screen.getByText(`Approved: ${create.name}`)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+
+    it("declining sends no approval", async () => {
+      const bodies: Record<string, unknown>[] = [];
+      twoTurns(bodies);
+      const { user, box } = await openChat();
+      await user.type(box, "make a mug{Enter}");
+      const card = await screen.findByRole("region", { name: "Approval needed" });
+      await user.click(within(card).getByRole("button", { name: "Decline" }));
+      await screen.findByText("Done.");
+      expect(bodies[1]).not.toHaveProperty("approved");
+      expect((bodies[1].messages as ChatMessage[]).at(-1)?.text).toMatch(/don't run/);
+    });
   });
 });

@@ -10,6 +10,7 @@ import { log } from "./logger.js";
 import { GatewayMetrics } from "./metrics/metrics.js";
 import { DEFAULT_LIMITS } from "./chat/agent.js";
 import { GeminiClient } from "./chat/gemini.js";
+import { GroqClient } from "./chat/groq.js";
 import { seed } from "./seed.js";
 import { ToolSurface } from "./search/surface.js";
 import { policyFrom } from "./security/ssrf.js";
@@ -65,29 +66,53 @@ const tools = new ToolSurface(
 );
 health.start();
 
-const chat = config.chat && {
-  llm: new GeminiClient({
-    apiKey: config.chat.apiKey,
-    model: config.chat.model,
-    baseUrl: config.chat.baseUrl,
-  }),
-  // Searching costs the model an extra step and call before each real tool.
-  limits: {
-    maxSteps: config.chat.maxSteps + (config.chat.searchMode === "off" ? 0 : 4),
-    ...(config.chat.searchMode === "off" ? {} : { maxToolCalls: DEFAULT_LIMITS.maxToolCalls + 8 }),
-    turnTimeoutMs: config.chat.turnTimeoutMs,
-  },
-  turnsPerMinute: config.chat.turnsPerMinute,
-  searchMode: config.chat.searchMode,
-  searchAutoThreshold: config.searchAutoThreshold,
-};
+const chatProviders = (config.chat?.providers ?? []).map((p) => ({
+  id: p.id,
+  model: p.model,
+  limits: p.limits,
+  llm:
+    p.id === "groq"
+      ? new GroqClient({
+          apiKey: p.apiKey,
+          model: p.model,
+          baseUrl: p.baseUrl,
+          reasoningEffort: p.reasoningEffort,
+        })
+      : new GeminiClient({ apiKey: p.apiKey, model: p.model, baseUrl: p.baseUrl }),
+}));
+const defaultChatProvider = chatProviders.find((p) => p.id === config.chat?.provider);
+
+const chat = config.chat &&
+  defaultChatProvider && {
+    llm: defaultChatProvider.llm,
+    providers: chatProviders,
+    defaultProvider: defaultChatProvider.id,
+    // Searching costs the model an extra step and call before each real tool.
+    limits: {
+      maxSteps: config.chat.maxSteps + (config.chat.searchMode === "off" ? 0 : 4),
+      ...(config.chat.searchMode === "off"
+        ? {}
+        : { maxToolCalls: DEFAULT_LIMITS.maxToolCalls + 8 }),
+      turnTimeoutMs: config.chat.turnTimeoutMs,
+    },
+    turnsPerMinute: config.chat.turnsPerMinute,
+    searchMode: config.chat.searchMode,
+    confirmWrites: config.chat.confirmWrites,
+    searchAutoThreshold: config.searchAutoThreshold,
+  };
 log("info", "tool surface", {
   searchMode: config.searchMode,
   chatSearchMode: config.chat?.searchMode,
 });
-log("info", chat ? "chat agent enabled" : "chat agent disabled (no GEMINI_API_KEY)", {
-  model: config.chat?.model,
-});
+log(
+  "info",
+  chat ? "chat agent enabled" : "chat agent disabled (set GROQ_API_KEY or GEMINI_API_KEY)",
+  {
+    provider: chat?.defaultProvider,
+    model: defaultChatProvider?.model,
+    switchableTo: chatProviders.map((p) => p.id),
+  },
+);
 
 const app = createApp({
   db,

@@ -52,7 +52,9 @@ interface ChatEvent {
   isError?: boolean;
   text?: string;
   message?: string;
+  code?: string;
   summary?: string;
+  args?: unknown;
 }
 
 describe.skipIf(!enabled)("system: the definition of done", () => {
@@ -135,22 +137,51 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     return { id, email, keyId: key.body.id, key: key.body.key, expected: [], cookie };
   }
 
-  /** One chat turn as the logged-in user (cookie session, like the dashboard). */
+  /**
+   * One chat exchange as the logged-in user (cookie session, like the dashboard).
+   * The gateway holds a tool that changes data until the user approves it, so
+   * this plays the user and approves what was held, then sends the next turn.
+   */
   async function chat(p: Person, message: string): Promise<ChatEvent[]> {
-    const res = await fetch(`${env.dashboard}/api/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        Cookie: p.cookie!,
-        Origin: env.dashboard!,
-      },
-      body: JSON.stringify({ messages: [{ role: "user", text: message }] }),
-    });
-    expect(res.status).toBe(200);
+    const messages = [{ role: "user", text: message }];
     const events: ChatEvent[] = [];
-    for (const line of (await res.text()).split("\n")) {
-      if (line.startsWith("data: ")) events.push(JSON.parse(line.slice(6)));
+    let approved: { name: string; args: unknown }[] | undefined;
+    // Groq's free tier allows ~8000 tokens a minute; a turn it cuts off is sent
+    // again once the window has passed (the same request, so nothing runs twice
+    // except reads that already ran).
+    let waits = 0;
+    for (let round = 0; round < 3; round++) {
+      const res = await fetch(`${env.dashboard}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+          Cookie: p.cookie!,
+          Origin: env.dashboard!,
+        },
+        body: JSON.stringify({ messages, ...(approved ? { approved } : {}) }),
+      });
+      expect(res.status).toBe(200);
+      const held: { name: string; args: unknown }[] = [];
+      const turn: ChatEvent[] = [];
+      for (const line of (await res.text()).split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        const e = JSON.parse(line.slice(6)) as ChatEvent;
+        turn.push(e);
+        if (e.type === "confirm") held.push({ name: e.name!, args: e.args });
+      }
+      const limited = turn.some((e) => e.type === "error" && e.code === "rate_limited");
+      if (limited && waits++ < 3) {
+        events.push(...turn.filter((e) => e.type !== "error"));
+        await new Promise((r) => setTimeout(r, 65_000));
+        round--;
+        continue;
+      }
+      events.push(...turn);
+      if (held.length === 0) break;
+      approved = held;
+      const what = held.map((h) => `${h.name} with ${JSON.stringify(h.args)}`).join("; ");
+      messages.push({ role: "user", text: `Yes, go ahead: ${what}.` });
     }
     return events;
   }
@@ -268,9 +299,15 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
 
   it("Chat as user A: 'create a product' puts it on the storefront", async () => {
     productName = `DoD Mug ${run}`;
-    await chatUntil(a, `Create a product named "${productName}" priced 9.75`, (ev) =>
+    const events = await chatUntil(a, `Create a product named "${productName}" priced 9.75`, (ev) =>
       called(ev).includes("woocommerce__create_product"),
     );
+    // A tool that changes data is held for the user's approval before it runs.
+    const kinds = events
+      .filter((e) => e.name === "woocommerce__create_product")
+      .map((e) => e.type)
+      .filter((t) => t === "confirm" || t === "tool_call");
+    expect(kinds.slice(0, 2), "create_product held, then run").toEqual(["confirm", "tool_call"]);
     const product = await storefrontProduct(productName);
     expect(product, "product on the storefront").toBeDefined();
     expect(product!.prices.price).toBe("975");
@@ -343,6 +380,8 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
   });
 
   it("Chat agent: one prompt that needs two upstreams", async () => {
+    // The heaviest turn: start it with a fresh per-minute token budget (free-tier Groq).
+    await new Promise((r) => setTimeout(r, 65_000));
     const events = await chatUntil(
       a,
       "Use DeepWiki to look up the structure of the woocommerce/woocommerce repository, " +
@@ -356,7 +395,8 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
       },
     );
     expect(events.at(-1)?.type).toBe("done");
-  });
+    // Long on purpose: a free-tier model may make this turn wait out rate limits.
+  }, 600_000);
 
   it("Tool permissions: members are read-only by default; an Allow grants a write tool, admins are unrestricted", async () => {
     const hidden = "woocommerce__update_order_status";

@@ -129,6 +129,72 @@ describe("loadConfig", () => {
     );
   });
 
+  describe("chat providers", () => {
+    it("is off with no provider key", () => {
+      expect(loadConfig(base).chat).toBeUndefined();
+    });
+
+    it("defaults to Groq's gpt-oss-120b with low reasoning effort", () => {
+      const chat = loadConfig({ ...base, GROQ_API_KEY: "gsk" }).chat!;
+      expect(chat.provider).toBe("groq");
+      expect(chat.providers).toEqual([
+        {
+          id: "groq",
+          apiKey: "gsk",
+          model: "openai/gpt-oss-120b",
+          baseUrl: undefined,
+          reasoningEffort: "low",
+          // Groq's free tier is ~8000 tokens/minute: smaller results, longer waits.
+          limits: { maxResultChars: 4000, maxRetryWaitMs: 20_000 },
+        },
+      ]);
+    });
+
+    it("lets the user switch when both keys exist, with Groq the default", () => {
+      const chat = loadConfig({ ...base, GROQ_API_KEY: "gsk", GEMINI_API_KEY: "gem" }).chat!;
+      expect(chat.provider).toBe("groq");
+      expect(chat.providers.map((p) => p.id)).toEqual(["groq", "gemini"]);
+    });
+
+    it("CHAT_PROVIDER=gemini makes Gemini the default but keeps Groq selectable", () => {
+      const chat = loadConfig({
+        ...base,
+        GROQ_API_KEY: "gsk",
+        GEMINI_API_KEY: "gem",
+        CHAT_PROVIDER: "gemini",
+      }).chat!;
+      expect(chat.provider).toBe("gemini");
+      expect(chat.providers.map((p) => p.id)).toEqual(["groq", "gemini"]);
+    });
+
+    it("falls back to the provider that has a key", () => {
+      expect(loadConfig({ ...base, GEMINI_API_KEY: "gem" }).chat?.provider).toBe("gemini");
+      expect(
+        loadConfig({ ...base, GROQ_API_KEY: "gsk", CHAT_PROVIDER: "gemini" }).chat?.provider,
+      ).toBe("groq");
+    });
+
+    it("reads the Groq model and reasoning effort, and lets effort be turned off", () => {
+      const chat = loadConfig({
+        ...base,
+        GROQ_API_KEY: "gsk",
+        GROQ_MODEL: "llama-3.3-70b-versatile",
+        GROQ_REASONING_EFFORT: "",
+      }).chat!;
+      expect(chat.providers[0]).toMatchObject({
+        model: "llama-3.3-70b-versatile",
+        reasoningEffort: undefined,
+      });
+    });
+
+    it("rejects an unknown provider or effort", () => {
+      expect(() => loadConfig({ ...base, CHAT_PROVIDER: "openai" })).toThrow(/CHAT_PROVIDER/);
+      expect(() => loadConfig({ ...base, GROQ_REASONING_EFFORT: "max" })).toThrow(
+        /GROQ_REASONING_EFFORT/,
+      );
+    });
+  });
+
   it("reads the auto threshold and the chat's own search mode", () => {
     const config = loadConfig({
       ...base,

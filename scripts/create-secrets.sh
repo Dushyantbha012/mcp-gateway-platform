@@ -83,12 +83,33 @@ if [ -z "$(kubectl -n "$NAMESPACE" get secret gateway-bootstrap-admin -o jsonpat
   echo "secret/gateway-bootstrap-admin: added dashboard password"
 fi
 
-# Chat agent (Phase 5). Only created when GEMINI_API_KEY is set, so an install
-# without a key still works (chat is simply off). The value is piped in, not
-# passed as an argument, so it never shows in a process list. To rotate:
-#   kubectl -n urumi delete secret gateway-gemini
-#   GEMINI_API_KEY=... ./scripts/create-secrets.sh
+# Chat agent. A provider's Secret is only created when its key is set, so an
+# install without keys still works (chat is simply off); with both, users can
+# switch between them in the chat page. Values are piped in, not passed as an
+# argument, so they never show in a process list. To rotate:
+#   kubectl -n urumi delete secret gateway-groq
+#   GROQ_API_KEY=... ./scripts/create-secrets.sh
 #   kubectl -n urumi rollout restart deployment/platform-gateway
+# (gateway-gemini / GEMINI_API_KEY work the same way.) Keys may also live in
+# ~/.config/urumi/groq.env and gemini.env, which this script reads if the
+# variables are unset.
+for provider_env in groq gemini; do
+  f="$HOME/.config/urumi/$provider_env.env"
+  if [ -f "$f" ]; then set -a; . "$f"; set +a; fi
+done
+
+if [ -n "${GROQ_API_KEY:-}" ]; then
+  if kubectl -n "$NAMESPACE" get secret gateway-groq >/dev/null 2>&1; then
+    echo "secret/gateway-groq exists, leaving it as is"
+  else
+    printf '%s' "$GROQ_API_KEY" |
+      kubectl -n "$NAMESPACE" create secret generic gateway-groq --from-file=api-key=/dev/stdin
+  fi
+else
+  kubectl -n "$NAMESPACE" get secret gateway-groq >/dev/null 2>&1 ||
+    echo "GROQ_API_KEY not set and no secret/gateway-groq: Groq (the default chat model) is unavailable"
+fi
+
 if [ -n "${GEMINI_API_KEY:-}" ]; then
   if kubectl -n "$NAMESPACE" get secret gateway-gemini >/dev/null 2>&1; then
     echo "secret/gateway-gemini exists, leaving it as is"

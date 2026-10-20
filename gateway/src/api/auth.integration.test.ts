@@ -531,6 +531,8 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
       expect((await member.as.get("/api/meta")).body).toEqual({
         mcpUrl: "http://gateway.test/mcp",
         chatEnabled: false,
+        chatProviders: [],
+        chatProvider: null,
         searchMode: "off",
       });
     });

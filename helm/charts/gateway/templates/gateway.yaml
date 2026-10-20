@@ -104,6 +104,20 @@ spec:
                   optional: true
             # Chat agent. Optional Secret: absent = chat is off (the endpoint
             # answers 503), everything else works.
+            - name: CHAT_PROVIDER
+              value: {{ .Values.gateway.chat.provider | quote }}
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.groq }}
+                  key: api-key
+                  optional: true
+            - name: GROQ_MODEL
+              value: {{ .Values.gateway.chat.groqModel | quote }}
+            - name: GROQ_MAX_RESULT_CHARS
+              value: {{ .Values.gateway.chat.groqMaxResultChars | quote }}
+            - name: GROQ_REASONING_EFFORT
+              value: {{ .Values.gateway.chat.groqReasoningEffort | quote }}
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -118,6 +132,8 @@ spec:
               value: {{ .Values.gateway.chat.turnTimeoutMs | quote }}
             - name: CHAT_TURNS_PER_MINUTE
               value: {{ .Values.gateway.chat.turnsPerMinute | quote }}
+            - name: CHAT_CONFIRM_WRITES
+              value: {{ .Values.gateway.chat.confirmWrites | quote }}
             - name: PUBLIC_MCP_URL
               value: {{ include "gateway.publicMcpUrl" . | quote }}
             {{- with .Values.dashboardUrl }}

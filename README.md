@@ -10,7 +10,7 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 **Status:** the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
 log and REST API), the team dashboard (login, servers, tools, keys, team,
-audit) and the chat agent (Gemini tool loop, streamed to the dashboard) run
+audit) and the chat agent (a tool loop on Groq's gpt-oss-120b by default, or Gemini, streamed to the dashboard) run
 on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
 DeepWiki), the brief's whole definition of done scripted end to end, and
 per-role / per-user tool permissions (members are read-only by default) on top,
@@ -60,18 +60,21 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    by RFC 2606), so these names can't collide with a real site.
 
 3. **Secrets** — random values, created once, never in git. For the chat
-   agent, create a free Gemini API key in
-   [Google AI Studio](https://aistudio.google.com/apikey) and pass it in the
-   environment (it's piped to `kubectl`, never put on a command line or in a
-   values file). Without it everything else works and chat is switched off:
+   agent, create a [Groq API key](https://console.groq.com/keys) (the default
+   model, `openai/gpt-oss-120b`) and/or a free Gemini key in
+   [Google AI Studio](https://aistudio.google.com/apikey). Put each in the
+   environment or in `~/.config/urumi/groq.env` / `gemini.env` (a line like
+   `GROQ_API_KEY=...`); the script pipes it to `kubectl`, so it never appears on a
+   command line or in a values file. With no key everything else works and chat is
+   switched off; with both, the chat page has a model selector:
 
    ```bash
-   GEMINI_API_KEY=... ./scripts/create-secrets.sh
+   GROQ_API_KEY=... GEMINI_API_KEY=... ./scripts/create-secrets.sh   # either one is enough
    ```
 
-   To rotate the key later: `kubectl -n urumi delete secret gateway-gemini`,
-   run the line above again, then `kubectl -n urumi rollout restart
-   deployment/platform-gateway`.
+   To rotate a key later: `kubectl -n urumi delete secret gateway-groq`
+   (or `gateway-gemini`), run the line above again, then `kubectl -n urumi
+   rollout restart deployment/platform-gateway`.
 
 4. **Build the images** and load them into the cluster:
 
@@ -100,7 +103,7 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase2.sh   # store + WooCommerce MCP server
    ./scripts/verify-phase3.sh   # gateway
    ./scripts/verify-phase4.sh   # dashboard: login, invites, keys, audit, live browser test
-   ./scripts/verify-phase5.sh   # chat agent (needs the Gemini key)
+   ./scripts/verify-phase5.sh   # chat agent (needs a Groq or Gemini key)
    ./scripts/verify-phase6.sh   # three upstreams + the full definition of done (needs the GitHub token too)
    ./scripts/verify-phase7.sh   # tool permissions (re-runs Phase 6 and 2-5)
    ./scripts/verify-phase8.sh   # security hardening (re-runs everything above under default-deny networking)
@@ -345,8 +348,9 @@ rendered as markdown (raw HTML is never rendered).
 
 To reproduce the demo flow:
 
-1. Chat: _"Create a product named Demo Mug priced 12.50"_. Open
-   http://store.local.test and the product is there.
+1. Chat: _"Create a product named Demo Mug priced 12.50"_. The agent stops with an
+   **Approval needed** card showing `woocommerce__create_product` and its
+   arguments; click **Approve**. Open http://store.local.test and the product is there.
 2. On the storefront, add it to the cart and check out with Cash on Delivery.
 3. Chat: _"What orders came in today?"_ — it calls `woocommerce__list_orders`
    and lists your order.
@@ -359,11 +363,31 @@ and the audit log are identical; disabling a server removes its tools from
 the very next step. Model, limits and the Secret are set under
 `gateway.chat` in the Helm values.
 
-The free Gemini tier is small: Flash models allow about 20 requests a day,
-Flash Lite (the default, `gemini-3.5-flash-lite`) about 500, and every step of
-a turn is one request. Check your key's limits at
-https://aistudio.google.com/rate-limit and change `gateway.chat.model` if you
-want a stronger model.
+**Approving writes.** A tool that changes data (anything its server doesn't mark
+`readOnlyHint`: `create_product`, `update_order_status`, GitHub's writes) is never
+run straight away. The gateway ends the turn with a `confirm` event, the dashboard
+shows an **Approval needed** card, and **Approve** / **Decline** answer it. The
+approval is enforced by the gateway, not the model: `POST /api/chat` accepts
+`approved: [{name, args}]`, and each entry lets one call to that tool with those
+exact arguments through; anything else is held again. Reads run without asking.
+`gateway.chat.confirmWrites: false` (env `CHAT_CONFIRM_WRITES`) turns it off. This
+guards the chat agent only: an MCP client's own tool calls are as it sent them.
+
+**Choosing the model.** The default is Groq's `openai/gpt-oss-120b` (tool calling
+over Groq's OpenAI-compatible API; `gateway.chat.groqModel`, and
+`groqReasoningEffort: low` keeps each step fast). Gemini is the alternative
+(`gateway.chat.model`, default `gemini-3.5-flash-lite`). Both are behind one
+`LlmClient` interface, so the tool loop, permissions and audit are identical.
+
+- **Which one is default:** `gateway.chat.provider: groq | gemini` (env
+  `CHAT_PROVIDER`). If that provider's Secret is missing, the other one is used.
+- **Switching at runtime:** when both keys exist the chat page shows a **Model**
+  menu next to "New chat"; the choice is sent per message (`provider` in
+  `POST /api/chat`), `GET /api/meta` lists `chatProviders`. No restart needed.
+- **Limits:** both free tiers are rate limited (Gemini Flash: ~20 requests/day,
+  Flash Lite ~500; Groq: per-minute token limits, so keep `gateway.search.chatMode`
+  on, which sends the model two tools instead of all of them). Every step of a turn
+  is one request. Check your limits in the Groq console / AI Studio.
 
 ## Observability
 
@@ -409,7 +433,7 @@ Four controls, each tested on its own and re-checked by `./scripts/verify-phase8
   `kubectl auth can-i get secrets -n urumi --as=system:serviceaccount:urumi:platform-gateway`.
 - **Deny-by-default networking.** `helm/templates/networkpolicies.yaml` denies
   all ingress and egress, then allows only the flows in the diagram at the top
-  of that file. The gateway can reach the public internet (Gemini, GitHub,
+  of that file. The gateway can reach the public internet (Groq, Gemini, GitHub,
   DeepWiki) but not private ranges, the node or cloud metadata. Prove it:
   `python3 scripts/netpol_matrix.py` prints a 9x10 table of what each workload
   can reach. On a new cluster set `global.networkPolicy.apiServerCidr` to the
@@ -430,8 +454,8 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase2.sh   # store + MCP server, live against the k3d deployment
 ./scripts/verify-phase3.sh   # gateway, live against the k3d deployment
 ./scripts/verify-phase4.sh   # dashboard, live (incl. a Playwright run against dashboard.local.test)
-./scripts/verify-phase5.sh   # chat agent, live against the real Gemini API (reads GEMINI_API_KEY or ~/.config/urumi/gemini.env); then re-runs phases 2-4
-./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real Gemini, GitHub, DeepWiki), then re-runs phases 2-5
+./scripts/verify-phase5.sh   # chat agent, live against the default provider (Groq, else Gemini; reads GROQ_API_KEY / GEMINI_API_KEY or ~/.config/urumi/*.env); then re-runs phases 2-4
+./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real chat model, GitHub, DeepWiki), then re-runs phases 2-5
 ./scripts/verify-phase7.sh   # the same suite plus its tool-permissions step, live permission/audit checks, then re-runs phases 2-5
 ```
 
@@ -448,11 +472,11 @@ SYSTEM_STORE_ADMIN_USER=... SYSTEM_STORE_ADMIN_PASSWORD=... npx vitest run --pro
 ```
 
 It needs a browser for the storefront step (`npx playwright install chromium`
-in `e2e/`, once) and takes about a minute and roughly 15 Gemini requests.
+in `e2e/`, once) and takes about a minute and roughly 15 model requests.
 
 The chat agent's unit, API and E2E tests use a scripted or rule-based fake
 model, so they are deterministic, free and need no key; only
-`verify-phase5.sh` talks to Gemini (about ten requests per run).
+`verify-phase5.sh` talks to the real model (about ten requests per run).
 
 The E2E suite starts the real gateway on a fresh database with fake MCP
 upstreams, builds the dashboard and drives it in Chromium (two browser
@@ -504,9 +528,11 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 - **Chat history lives in the browser.** Refreshing the page starts a new
   conversation, and only the text of earlier turns (not their tool calls) is
   sent back to the model.
-- **The chat agent doesn't ask before destructive tools.** It acts with the
-  user's own permissions and every call is audited, but there is no
-  per-call confirmation. Members are read-only by default, so a write tool
+- **Chat approvals are per call, not per tool.** The agent asks before every
+  write (see "Approving writes"), but the user sees the model's arguments, not
+  what the upstream will do with them, and an MCP client gets no prompt from the
+  gateway at all (Claude Code and Cursor ask on their side). Members are
+  read-only by default, so a write tool
   (WooCommerce's `create_product`, `update_order_status`, GitHub's writes) works
   for a member only after an admin Allows it; an upstream tool without a
   `readOnlyHint` counts as a write tool. An Allow on a whole server also covers
@@ -517,7 +543,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
   expired); the gateway then marks that one server Unreachable and the rest
   keep working.
 - **Chat limits are per gateway pod** (turns per minute per user, in
-  memory), like the login limiter, and the Gemini free tier has a daily cap.
+  memory), like the login limiter, and the free model tiers have rate and daily caps.
 - **Login rate limiting is per gateway pod** (in memory). With more
   replicas an attacker gets that many times the attempts; a shared store
   (or a rate limit at the ingress) would fix it and is not done.

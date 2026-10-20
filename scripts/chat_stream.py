@@ -4,7 +4,11 @@ the seconds since the request was sent ("t"), as it arrives. Used by
 verify-phase5.sh to prove tool calls are streamed (not delivered at the end)
 and to inspect which tools the agent called.
 
-  chat_stream.py URL "message" [--bearer KEY | --cookie JAR --origin ORIGIN]
+  chat_stream.py URL "message" [--bearer KEY | --cookie JAR --origin ORIGIN] [--approve]
+
+A write tool makes the gateway stop with a "confirm" event and wait for the user.
+With --approve this script plays the user: it approves what was held and sends
+the follow-up turn, printing that turn's events too (a "confirm" is printed first).
 """
 import http.cookiejar
 import json
@@ -23,23 +27,36 @@ if "--cookie" in rest:
     headers["Cookie"] = "; ".join(f"{c.name}={c.value}" for c in jar)
     headers["Origin"] = rest[rest.index("--origin") + 1]
 
-req = urllib.request.Request(
-    url,
-    data=json.dumps({"messages": [{"role": "user", "text": message}]}).encode(),
-    headers=headers,
-    method="POST",
-)
 start = time.time()
-try:
-    resp = urllib.request.urlopen(req, timeout=150)
-except urllib.error.HTTPError as e:
-    print(json.dumps({"http_status": e.code, "body": e.read().decode()[:300]}))
-    sys.exit(0)
 
-event = None
-for raw in resp:  # unbuffered line iteration: yields as soon as a line arrives
-    line = raw.decode().rstrip("\n")
-    if line.startswith("data: "):
-        data = json.loads(line[6:])
-        data["t"] = round(time.time() - start, 2)
-        print(json.dumps(data), flush=True)
+
+def turn(messages, approved):
+    body = {"messages": messages}
+    if approved:
+        body["approved"] = approved
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    try:
+        resp = urllib.request.urlopen(req, timeout=150)
+    except urllib.error.HTTPError as e:
+        print(json.dumps({"http_status": e.code, "body": e.read().decode()[:300]}))
+        sys.exit(0)
+    held = []
+    for raw in resp:  # unbuffered line iteration: yields as soon as a line arrives
+        line = raw.decode().rstrip("\n")
+        if line.startswith("data: "):
+            data = json.loads(line[6:])
+            data["t"] = round(time.time() - start, 2)
+            print(json.dumps(data), flush=True)
+            if data.get("type") == "confirm":
+                held.append({"name": data["name"], "args": data["args"]})
+    return held
+
+
+messages = [{"role": "user", "text": message}]
+held = turn(messages, None)
+for _ in range(3):  # a turn may hold several writes in a row
+    if not (held and "--approve" in rest):
+        break
+    what = "; ".join(f"{h['name']} with {json.dumps(h['args'])}" for h in held)
+    messages = messages + [{"role": "user", "text": f"Yes, go ahead: {what}."}]
+    held = turn(messages, held)

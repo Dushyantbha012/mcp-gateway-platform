@@ -8,8 +8,10 @@
 secrets:
   db: gateway-db # keys: password
   bootstrapAdmin: gateway-bootstrap-admin # keys: email, api-key, password (optional Secret)
-  # Gemini API key for the chat agent (optional Secret: without it chat is
-  # switched off and the rest of the gateway is unaffected).
+  # API keys for the chat agent (optional Secrets: with neither, chat is
+  # switched off and the rest of the gateway is unaffected; with both, users
+  # can switch between the two in the chat page).
+  groq: gateway-groq # keys: api-key
   gemini: gateway-gemini # keys: api-key
 
 # Upstream servers' credentials (GitHub token, ...) are stored as Kubernetes
@@ -75,12 +77,25 @@ gateway:
       # Extra labels, e.g. the "release: kube-prometheus-stack" your Prometheus selects on.
       labels: {}
   chat:
-    # Free-tier quotas: Flash models ~20 requests/day, Flash Lite ~500/day;
+    # The model a chat uses unless the user picks the other: groq | gemini.
+    # If the chosen one has no API key Secret, the other is used.
+    provider: groq
+    # Groq (default). openai/gpt-oss-120b supports tool calling; reasoningEffort
+    # (low | medium | high | "" to not send) applies to gpt-oss models only.
+    groqModel: openai/gpt-oss-120b
+    groqReasoningEffort: low
+    # Groq's free tier is ~8000 tokens/minute: cut each tool result fed back to the
+    # model to this many characters (~4 per token).
+    groqMaxResultChars: 4000
+    # Gemini. Free-tier quotas: Flash models ~20 requests/day, Flash Lite ~500/day;
     # each chat turn costs one request per model step.
     model: gemini-3.5-flash-lite
     maxSteps: 8
     turnTimeoutMs: 90000
     turnsPerMinute: 6
+    # The chat agent stops and asks the user before running a tool that changes data
+    # (anything an upstream doesn't mark read-only). The user approves in the dashboard.
+    confirmWrites: true
   # SSRF guard: upstream URLs must resolve to public addresses. Hostnames
   # listed here (exact match) may resolve to private ones - for in-cluster MCP
   # servers. The seeded WooCommerce server's host is allowed automatically.

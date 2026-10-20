@@ -10,13 +10,23 @@ import { SseParser } from "@/lib/sse";
  */
 export async function streamChat(
   messages: ChatMessage[],
-  opts: { signal?: AbortSignal; onEvent: (event: ChatEvent) => void },
+  opts: {
+    signal?: AbortSignal;
+    provider?: string;
+    /** Writes the user just approved, each letting one identical call through. */
+    approved?: { name: string; args: unknown }[];
+    onEvent: (event: ChatEvent) => void;
+  },
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({
+      messages,
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      ...(opts.approved?.length ? { approved: opts.approved } : {}),
+    }),
     signal: opts.signal,
   });
   if (!res.ok) {

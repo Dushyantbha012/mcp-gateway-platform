@@ -6,7 +6,7 @@ purpose: this is the whole network design, readable top to bottom.
   Traefik ──► gateway ──► Postgres
                       ├─► WooCommerce MCP ──► WordPress ──► MySQL
                       ├─► Kubernetes API   (manages upstream Secrets)
-                      └─► public internet  (Gemini, GitHub, DeepWiki; private
+                      └─► public internet  (Groq, Gemini, GitHub, DeepWiki; private
                                             ranges excluded)
   Traefik ──► WordPress
   bootstrap Job ──► MySQL, public internet (downloads WooCommerce)

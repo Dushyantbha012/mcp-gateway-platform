@@ -85,8 +85,25 @@ const schema = z
       .positive()
       .max(24 * 30)
       .default(24 * 7),
-    // Chat agent. Without a key the chat endpoint answers 503 and everything
-    // else works as before. The key comes from a k8s Secret.
+    // Chat agent. Without any provider key the chat endpoint answers 503 and
+    // everything else works as before. Keys come from k8s Secrets.
+    // CHAT_PROVIDER picks the default; users can switch to any other provider
+    // that has a key. Default groq (falls back to the other if only it has a key).
+    CHAT_PROVIDER: z
+      .enum(["groq", "gemini", ""])
+      .optional()
+      .transform((v) => (v === undefined || v === "" ? "groq" : v)),
+    GROQ_API_KEY: optionalString,
+    GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
+    GROQ_BASE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
+    // gpt-oss only: low | medium | high ("" = don't send). Low is fastest and cheapest.
+    // Groq's free tier allows ~8000 tokens a minute, so a big tool result can use it all:
+    // results fed back to the model are cut to this many characters (~4 per token).
+    GROQ_MAX_RESULT_CHARS: z.coerce.number().int().min(500).default(4000),
+    GROQ_REASONING_EFFORT: z
+      .enum(["low", "medium", "high", ""])
+      .optional()
+      .transform((v) => (v === undefined ? "low" : v)),
     GEMINI_API_KEY: optionalString,
     // Free-tier Flash models allow ~20 requests a day; Flash Lite allows 500.
     GEMINI_MODEL: z.string().min(1).default("gemini-3.5-flash-lite"),
@@ -95,6 +112,8 @@ const schema = z
     CHAT_TURN_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(90_000),
     // Chat turns one user may start per minute (each turn costs several LLM requests).
     CHAT_TURNS_PER_MINUTE: z.coerce.number().int().min(1).default(6),
+    // Hold chat tool calls that change data until the user approves them.
+    CHAT_CONFIRM_WRITES: envBooleanDefaultOn,
     // Reverse proxies (Traefik) in front of the gateway, for the client IP
     // used by the login rate limit.
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
@@ -135,14 +154,31 @@ export interface AuthConfig {
   inviteTtlMs: number;
 }
 
-export interface ChatConfig {
+export type ChatProviderId = "groq" | "gemini";
+
+/** One model provider that has an API key. */
+export interface ChatProviderConfig {
+  id: ChatProviderId;
   apiKey: string;
   model: string;
   baseUrl?: string;
+  /** Groq gpt-oss only. */
+  reasoningEffort?: string;
+  /** Per-provider agent limits (smaller results and longer rate-limit waits on Groq). */
+  limits?: { maxResultChars?: number; maxRetryWaitMs?: number };
+}
+
+export interface ChatConfig {
+  /** The provider a chat uses unless the user picks another. Always one of `providers`. */
+  provider: ChatProviderId;
+  /** Every provider with an API key; the user may switch between them. */
+  providers: ChatProviderConfig[];
   maxSteps: number;
   turnTimeoutMs: number;
   turnsPerMinute: number;
   searchMode: SearchMode;
+  /** Writes wait for the user's approval. */
+  confirmWrites: boolean;
 }
 
 export interface Config {
@@ -160,7 +196,7 @@ export interface Config {
   ssrfAllowedHosts: string[];
   upstreamSecretsNamespace?: string;
   auth: AuthConfig;
-  /** Undefined when no GEMINI_API_KEY is set: chat is switched off. */
+  /** Undefined when no provider has an API key: chat is switched off. */
   chat?: ChatConfig;
   bootstrapAdmin?: { email: string; apiKey: string; password?: string };
   seedWoocommerce?: { url: string; token: string };
@@ -176,6 +212,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration:\n${problems}`);
   }
   const e = result.data;
+  // Groq first, so it is the fallback default when CHAT_PROVIDER names a provider without a key.
+  const chatProviders: ChatProviderConfig[] = [
+    ...(e.GROQ_API_KEY
+      ? [
+          {
+            id: "groq" as const,
+            apiKey: e.GROQ_API_KEY,
+            model: e.GROQ_MODEL,
+            baseUrl: e.GROQ_BASE_URL,
+            reasoningEffort: e.GROQ_REASONING_EFFORT || undefined,
+            // A per-minute token cap clears within a minute: wait up to 20 s, twice, before failing.
+            limits: { maxResultChars: e.GROQ_MAX_RESULT_CHARS, maxRetryWaitMs: 20_000 },
+          },
+        ]
+      : []),
+    ...(e.GEMINI_API_KEY
+      ? [
+          {
+            id: "gemini" as const,
+            apiKey: e.GEMINI_API_KEY,
+            model: e.GEMINI_MODEL,
+            baseUrl: e.GEMINI_BASE_URL,
+          },
+        ]
+      : []),
+  ];
   return {
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
@@ -202,15 +264,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       sessionTtlMs: e.SESSION_TTL_HOURS * 3_600_000,
       inviteTtlMs: e.INVITE_TTL_HOURS * 3_600_000,
     },
-    chat: e.GEMINI_API_KEY
+    chat: chatProviders.length
       ? {
-          apiKey: e.GEMINI_API_KEY,
-          model: e.GEMINI_MODEL,
-          baseUrl: e.GEMINI_BASE_URL,
+          provider: (chatProviders.find((p) => p.id === e.CHAT_PROVIDER) ?? chatProviders[0]!).id,
+          providers: chatProviders,
           maxSteps: e.CHAT_MAX_STEPS,
           turnTimeoutMs: e.CHAT_TURN_TIMEOUT_MS,
           turnsPerMinute: e.CHAT_TURNS_PER_MINUTE,
           searchMode: e.CHAT_SEARCH_MODE,
+          confirmWrites: e.CHAT_CONFIRM_WRITES,
         }
       : undefined,
     bootstrapAdmin:

@@ -268,12 +268,32 @@ describe("runAgent", () => {
       expect(events).toEqual([{ type: "error", code: "rate_limited", message: "daily quota" }]);
     });
 
-    it("gives up if the retry is rate limited too", async () => {
+    it("retries a second time, then gives up if it is still rate limited", async () => {
       const sleep = vi.fn(async () => {});
       const e = new LlmError("rate_limited", "slow down", 100);
-      const { deps } = setup([e, e], { sleep });
-      const events = await collect(runAgent(ask("x"), deps));
-      expect(events).toEqual([{ type: "error", code: "rate_limited", message: "slow down" }]);
+      const twice = setup([e, e, say("ok")], { sleep });
+      expect((await collect(runAgent(ask("x"), twice.deps))).at(-1)).toMatchObject({
+        type: "done",
+      });
+      expect(sleep).toHaveBeenCalledTimes(2);
+
+      const giveUp = setup([e, e, e], { sleep });
+      expect(await collect(runAgent(ask("x"), giveUp.deps))).toEqual([
+        { type: "error", code: "rate_limited", message: "slow down" },
+      ]);
+    });
+
+    it("waits as long as the provider's limit allows (Groq's per-minute token cap)", async () => {
+      const sleep = vi.fn(async () => {});
+      const slow = new LlmError("rate_limited", "tpm", 12_000);
+      const refuses = setup([slow], { sleep });
+      expect(await collect(runAgent(ask("x"), refuses.deps))).toHaveLength(1);
+      expect(sleep).not.toHaveBeenCalled();
+
+      const waits = setup([slow, say("ok")], { sleep, limits: { maxRetryWaitMs: 20_000 } });
+      const events = await collect(runAgent(ask("x"), waits.deps));
+      expect(sleep).toHaveBeenCalledWith(12_000);
+      expect(events.at(-1)).toMatchObject({ type: "done" });
     });
 
     it("hides unexpected errors", async () => {
@@ -429,5 +449,87 @@ describe("search mode", () => {
     );
     const events = await collect(runAgent(ask("x"), deps));
     expect(types(events).at(-1)).toBe("done");
+  });
+});
+
+describe("runAgent: approving writes", () => {
+  const writes = (name: string) => Promise.resolve(name === "shop__create_product");
+  const create = { name: "shop__create_product", args: { name: "Mug", price: "9" } };
+
+  it("holds a write: no call is made, the user is asked, the turn ends", async () => {
+    const { deps, callTool, llm } = setup([callTools(create)], { needsConfirmation: writes });
+    const events = await collect(runAgent(ask("make a mug"), deps));
+    expect(events).toEqual([
+      {
+        type: "confirm",
+        id: "call_1",
+        name: "shop__create_product",
+        server: "shop",
+        args: create.args,
+      },
+      { type: "done", steps: 1 },
+    ]);
+    expect(callTool).not.toHaveBeenCalled();
+    // The model was told the dashboard does the asking.
+    expect(llm.requests[0].system).toMatch(/dashboard itself asks the user to approve/);
+  });
+
+  it("runs reads in the same step and holds only the write", async () => {
+    const { deps, callTool } = setup(
+      [callTools({ name: "shop__list_orders" }, { ...create, id: "call_2" })],
+      { needsConfirmation: writes },
+    );
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(types(events)).toEqual(["tool_call", "tool_result", "confirm", "done"]);
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs an approved write once, whatever the order of its arguments", async () => {
+    const { deps, callTool } = setup(
+      [callTools({ ...create, args: { price: "9", name: "Mug" } }), say("Created.")],
+      { needsConfirmation: writes, approved: [{ name: create.name, args: create.args }] },
+    );
+    const events = await collect(runAgent(ask("yes, go ahead"), deps));
+    expect(types(events)).toEqual(["tool_call", "tool_result", "text", "done"]);
+    expect(callTool).toHaveBeenCalledWith(create.name, { price: "9", name: "Mug" });
+  });
+
+  it("does not run a write whose arguments differ from what was approved", async () => {
+    const { deps, callTool } = setup(
+      [callTools({ ...create, args: { name: "Mug", price: "900" } })],
+      { needsConfirmation: writes, approved: [{ name: create.name, args: create.args }] },
+    );
+    const events = await collect(runAgent(ask("yes"), deps));
+    expect(types(events)).toEqual(["confirm", "done"]);
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("an approval is single-use", async () => {
+    const { deps, callTool } = setup([callTools(create, { ...create, id: "call_2" })], {
+      needsConfirmation: writes,
+      approved: [{ name: create.name, args: create.args }],
+    });
+    const events = await collect(runAgent(ask("yes"), deps));
+    expect(types(events)).toEqual(["tool_call", "tool_result", "confirm", "done"]);
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks about the tool inside call_tool, not about call_tool", async () => {
+    const { deps, callTool } = setup(
+      [callTools({ name: "call_tool", args: { name: create.name, arguments: create.args } })],
+      {
+        needsConfirmation: writes,
+        listTools: async () => [tool("search_tools"), tool("call_tool")],
+      },
+    );
+    const events = await collect(runAgent(ask("x"), deps));
+    expect(events[0]).toMatchObject({ type: "confirm", name: create.name, args: create.args });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("runs everything when no confirmation is configured", async () => {
+    const { deps, callTool } = setup([callTools(create), say("ok")]);
+    await collect(runAgent(ask("x"), deps));
+    expect(callTool).toHaveBeenCalledTimes(1);
   });
 });

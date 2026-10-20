@@ -72,6 +72,16 @@ export class ToolRouter {
   }
 
   /**
+   * Whether the upstream marks `name` read-only. `undefined` for a tool that
+   * isn't routable (the call will be rejected anyway); a tool with no
+   * `readOnlyHint` counts as a write.
+   */
+  async isReadOnly(name: string): Promise<boolean | undefined> {
+    const enabled = (await listServers(this.db)).filter((s) => s.enabled);
+    return indexOf(enabled).routes.get(name)?.readOnly;
+  }
+
+  /**
    * Audits a gateway-level call that never reaches an upstream (today: the
    * `search_tools` meta-tool), so it shows in the same log as everything else.
    */

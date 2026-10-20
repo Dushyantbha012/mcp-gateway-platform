@@ -102,6 +102,9 @@ export function createApp(deps: AppDeps) {
     res.json({
       mcpUrl: auth.publicMcpUrl ?? null,
       chatEnabled: deps.chat !== undefined,
+      // The models a user can switch between in the chat; which one is the default.
+      chatProviders: (deps.chat?.providers ?? []).map((p) => ({ id: p.id, model: p.model })),
+      chatProvider: deps.chat?.defaultProvider ?? null,
       searchMode: tools.mode,
     });
   });

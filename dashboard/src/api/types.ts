@@ -113,9 +113,17 @@ export interface AuditFilters {
   requestId?: string;
 }
 
+export interface ChatProvider {
+  id: string;
+  model: string;
+}
+
 export interface Meta {
   mcpUrl: string | null;
   chatEnabled: boolean;
+  /** The models a user can switch between in the chat, and the default one's id. */
+  chatProviders?: ChatProvider[];
+  chatProvider?: string | null;
   /** How MCP clients get tools by default: all of them, or search_tools + call_tool. */
   searchMode?: "off" | "on" | "auto";
 }
@@ -137,6 +145,8 @@ export type ChatEvent =
       summary: string;
       durationMs: number;
     }
+  /** A tool that changes data, held until the user approves it; the turn ends after it. */
+  | { type: "confirm"; id: string; name: string; server: string | null; args: unknown }
   | { type: "text"; text: string }
   | { type: "done"; steps: number }
   | { type: "error"; code: string; message: string };

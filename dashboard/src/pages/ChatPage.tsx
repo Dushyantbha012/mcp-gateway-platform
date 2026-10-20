@@ -1,6 +1,7 @@
 import {
   Bot,
   ChevronRight,
+  ShieldQuestion,
   CircleCheck,
   CircleX,
   LoaderCircle,
@@ -14,6 +15,7 @@ import { ApiError, errorMessage } from "@/api/client";
 import { useMeta } from "@/api/hooks";
 import type { ChatMessage } from "@/api/types";
 import { Markdown } from "@/components/Markdown";
+import { NativeSelect } from "@/components/NativeSelect";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,9 +30,13 @@ const SUGGESTIONS = [
   { text: 'Create a product named "" priced ', send: false },
 ];
 
+const PROVIDER_LABEL: Record<string, string> = { groq: "Groq", gemini: "Gemini" };
+
 /** The transcript the gateway needs: finished text turns only, ending with the user's message. */
 function toMessages(turns: Turn[]): ChatMessage[] {
-  return turns.filter((t) => t.text.trim()).map((t) => ({ role: t.role, text: t.text }));
+  return turns
+    .filter((t) => t.text.trim())
+    .map((t) => ({ role: t.role, text: t.modelText ?? t.text }));
 }
 
 function ToolRunItem({ run }: { run: ToolRun }) {
@@ -84,6 +90,60 @@ function ToolRunItem({ run }: { run: ToolRun }) {
   );
 }
 
+function ConfirmCard({
+  turn,
+  actionable,
+  onDecide,
+}: {
+  turn: Turn;
+  actionable: boolean;
+  onDecide: (approve: boolean) => void;
+}) {
+  const items = turn.confirmations ?? [];
+  return (
+    <section
+      aria-label="Approval needed"
+      className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
+    >
+      <div className="flex items-center gap-2 font-medium">
+        <ShieldQuestion className="size-4 text-amber-600" />
+        {items.length === 1
+          ? "This changes data. Run it?"
+          : `${items.length} actions change data. Run them?`}
+      </div>
+      <ul className="space-y-2">
+        {items.map((c) => (
+          <li key={c.id} className="rounded-md border bg-background p-2 text-xs">
+            <code className="font-medium">{c.name}</code>
+            <pre className="mt-1 max-h-32 overflow-auto font-mono whitespace-pre-wrap text-muted-foreground">
+              {JSON.stringify(c.args, null, 2)}
+            </pre>
+          </li>
+        ))}
+      </ul>
+      {turn.decision ? (
+        <div className="text-xs text-muted-foreground">
+          {turn.decision === "approved" ? "Approved." : "Declined."}
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button size="sm" disabled={!actionable} onClick={() => onDecide(true)}>
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!actionable}
+            onClick={() => onDecide(false)}
+          >
+            Decline
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ThinkingDots() {
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -101,7 +161,17 @@ function ThinkingDots() {
   );
 }
 
-function TurnView({ turn, streaming }: { turn: Turn; streaming: boolean }) {
+function TurnView({
+  turn,
+  streaming,
+  actionable,
+  onDecide,
+}: {
+  turn: Turn;
+  streaming: boolean;
+  actionable: boolean;
+  onDecide: (approve: boolean) => void;
+}) {
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
@@ -131,6 +201,9 @@ function TurnView({ turn, streaming }: { turn: Turn; streaming: boolean }) {
           </div>
         )}
         {turn.text && <Markdown>{turn.text}</Markdown>}
+        {turn.confirmations && turn.confirmations.length > 0 && (
+          <ConfirmCard turn={turn} actionable={actionable} onDecide={onDecide} />
+        )}
         {idle && <ThinkingDots />}
         {turn.stopped && <div className="text-xs text-muted-foreground">Stopped.</div>}
         {turn.error && (
@@ -204,11 +277,45 @@ export function ChatPage() {
   useEffect(() => () => abort.current?.abort(), []);
 
   const disabled = meta.data?.chatEnabled === false;
+  // The user's pick, if any; otherwise the gateway's default.
+  const providers = meta.data?.chatProviders ?? [];
+  const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
+  const provider =
+    providers.find((p) => p.id === pickedProvider)?.id ?? meta.data?.chatProvider ?? undefined;
 
-  async function send(override?: string) {
+  /** The user's answer to the writes the last turn is holding: approve them all, or decline. */
+  function decide(approve: boolean) {
+    const held = turns.at(-1)?.confirmations ?? [];
+    if (held.length === 0 || streaming) return;
+    const names = held.map((c) => c.name).join(", ");
+    setTurns((all) =>
+      all.map((t, i) =>
+        i === all.length - 1 ? { ...t, decision: approve ? "approved" : "denied" } : t,
+      ),
+    );
+    if (!approve) {
+      void send(`No, don't run ${names}.`);
+      return;
+    }
+    void send(`Approved: ${names}`, {
+      modelText: `Yes, go ahead: ${held.map((c) => `${c.name} with ${JSON.stringify(c.args)}`).join("; ")}.`,
+      approved: held.map((c) => ({ name: c.name, args: c.args })),
+    });
+  }
+
+  async function send(
+    override?: string,
+    approval?: { modelText: string; approved: { name: string; args: unknown }[] },
+  ) {
     const text = (override ?? input).trim();
     if (!text || streaming || disabled) return;
-    const user: Turn = { id: nextId.current++, role: "user", text, tools: [] };
+    const user: Turn = {
+      id: nextId.current++,
+      role: "user",
+      text,
+      modelText: approval?.modelText,
+      tools: [],
+    };
     const reply: Turn = { id: nextId.current++, role: "assistant", text: "", tools: [] };
     const history = toMessages([...turns, user]);
     setTurns((t) => [...t, user, reply]);
@@ -222,6 +329,8 @@ export function ChatPage() {
     try {
       await streamChat(history, {
         signal: ctrl.signal,
+        provider,
+        approved: approval?.approved,
         onEvent: (event) => update((t) => applyEvent(t, event)),
       });
     } catch (err) {
@@ -262,14 +371,31 @@ export function ChatPage() {
         title="Chat"
         description="Answers come from the same tools your MCP client sees. Every call is made as you and appears in the audit log."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={streaming || turns.length === 0}
-            onClick={() => setTurns([])}
-          >
-            <Plus /> New chat
-          </Button>
+          <div className="flex items-center gap-2">
+            {providers.length > 1 && (
+              <NativeSelect
+                aria-label="Model"
+                className="w-auto"
+                value={provider ?? ""}
+                disabled={streaming}
+                onChange={(e) => setPickedProvider(e.target.value)}
+              >
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {PROVIDER_LABEL[p.id] ?? p.id} · {p.model}
+                  </option>
+                ))}
+              </NativeSelect>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={streaming || turns.length === 0}
+              onClick={() => setTurns([])}
+            >
+              <Plus /> New chat
+            </Button>
+          </div>
         }
       />
       {disabled && (
@@ -277,7 +403,8 @@ export function ChatPage() {
           role="status"
           className="mb-4 rounded-lg border bg-card px-4 py-3 text-sm text-card-foreground"
         >
-          The chat agent is not configured on this gateway: an admin needs to set a Gemini API key.
+          The chat agent is not configured on this gateway: an admin needs to set a Groq or Gemini
+          API key.
         </div>
       )}
       <section
@@ -300,6 +427,8 @@ export function ChatPage() {
                   key={turn.id}
                   turn={turn}
                   streaming={streaming && i === turns.length - 1}
+                  actionable={!streaming && i === turns.length - 1}
+                  onDecide={decide}
                 />
               ))
             )}
