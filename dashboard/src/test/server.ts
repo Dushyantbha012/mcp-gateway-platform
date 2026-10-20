@@ -36,6 +36,7 @@ export function serverFixture(overrides: Partial<Server> = {}): Server {
     authHeaderName: null,
     hasCredential: true,
     timeoutMs: 10_000,
+    managedBy: null,
     tools: [
       {
         name: "woocommerce__list_orders",

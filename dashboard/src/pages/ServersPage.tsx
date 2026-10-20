@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
 import { ServerFormDialog } from "@/components/ServerFormDialog";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -93,6 +94,11 @@ function ServerCard({
           <code>{server.slug}</code>
           {server.url && <> · {server.url}</>}
         </p>
+        {server.managedBy && (
+          <Badge variant="secondary" className="w-fit">
+            {server.managedBy === "store" ? "Managed by Stores" : "Hosted"}
+          </Badge>
+        )}
       </CardHeader>
       <CardContent className="flex-1 space-y-3 text-sm">
         {server.status === "unreachable" && server.lastError && (
@@ -126,7 +132,18 @@ function ServerCard({
         <Button variant="secondary" size="sm" onClick={onOpen}>
           <Wrench /> {server.tools.length} {server.tools.length === 1 ? "tool" : "tools"}
         </Button>
-        {isAdmin && (
+        {isAdmin && server.managedBy && (
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={!server.enabled || refresh.isPending}
+            onClick={() => refresh.mutate(server.id, { onError: fail })}
+            aria-label={`Check ${server.name} now`}
+          >
+            <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
+          </Button>
+        )}
+        {isAdmin && !server.managedBy && (
           <div className="flex items-center gap-1">
             <Switch
               checked={server.enabled}

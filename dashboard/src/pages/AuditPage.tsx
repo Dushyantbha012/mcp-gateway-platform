@@ -20,7 +20,11 @@ import {
 import { dateTime, duration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const SOURCE_LABELS: Record<AuditSource, string> = { mcp: "MCP", chat: "Chat", dashboard: "Dashboard" };
+const SOURCE_LABELS: Record<AuditSource, string> = {
+  mcp: "MCP",
+  chat: "Chat",
+  dashboard: "Dashboard",
+};
 
 export function AuditPage() {
   const [filters, setFilters] = useState<AuditFilters>({});

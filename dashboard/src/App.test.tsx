@@ -115,7 +115,7 @@ describe("role-based navigation", () => {
       within(nav)
         .getAllByRole("link")
         .map((l) => l.textContent),
-    ).toEqual(["Overview", "Chat", "Servers", "Tools", "Approvals", "API keys"]);
+    ).toEqual(["Overview", "Chat", "Servers", "Stores", "Tools", "Approvals", "API keys"]);
     await waitFor(() => expect(location()).toBe("/"));
   });
 
@@ -132,6 +132,7 @@ describe("role-based navigation", () => {
       "Overview",
       "Chat",
       "Servers",
+      "Stores",
       "Tools",
       "Approvals",
       "API keys",
