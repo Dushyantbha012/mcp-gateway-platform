@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { Agent, fetch as undiciFetch } from "undici";
+import { K8sClient, resourcePath } from "../k8s/client.js";
 import type { CredentialStore, StoredCredential } from "./store.js";
 
-const SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount";
+export { K8sApiError } from "../k8s/client.js";
+
 const SECRET_PREFIX = "mcp-upstream-";
 const KEY = "credential";
 const MANAGED_BY = "app.kubernetes.io/managed-by=mcp-gateway";
@@ -17,17 +17,8 @@ export interface K8sSecretStoreOptions {
   /** PEM of the API server's CA; omitted for plain-http fakes in tests. */
   ca?: string;
   timeoutMs?: number;
-}
-
-/** A Kubernetes API call failed. The message never includes a Secret's contents. */
-export class K8sApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "K8sApiError";
-  }
+  /** Share an existing client instead of building one from the fields above. */
+  client?: K8sClient;
 }
 
 /**
@@ -39,24 +30,16 @@ export class K8sApiError extends Error {
  * session secrets, not the other namespaces.
  */
 export class K8sSecretStore implements CredentialStore {
-  private readonly dispatcher?: Agent;
-  private readonly token: () => Promise<string>;
+  private readonly client: K8sClient;
 
   constructor(private readonly opts: K8sSecretStoreOptions) {
-    this.dispatcher = opts.ca ? new Agent({ connect: { ca: opts.ca } }) : undefined;
-    this.token = opts.token ?? (async () => (await readFile(`${SA_DIR}/token`, "utf8")).trim());
+    this.client = opts.client ?? new K8sClient(opts);
   }
 
   /** Reads the in-cluster ServiceAccount token and CA; throws outside a pod. */
   static async inCluster(namespace: string): Promise<K8sSecretStore> {
-    const host = process.env.KUBERNETES_SERVICE_HOST;
-    const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
-    if (!host) throw new Error("not running in a Kubernetes pod (KUBERNETES_SERVICE_HOST unset)");
-    return new K8sSecretStore({
-      apiUrl: `https://${host.includes(":") ? `[${host}]` : host}:${port}`,
-      namespace,
-      ca: await readFile(`${SA_DIR}/ca.crt`, "utf8"),
-    });
+    const client = await K8sClient.inCluster();
+    return new K8sSecretStore({ apiUrl: "", namespace, client });
   }
 
   async get(serverId: string): Promise<StoredCredential | null> {
@@ -124,32 +107,17 @@ export class K8sSecretStore implements CredentialStore {
     return `${SECRET_PREFIX}${serverId}`;
   }
   private collection() {
-    return `/api/v1/namespaces/${encodeURIComponent(this.opts.namespace)}/secrets`;
+    return resourcePath("v1", "Secret", this.opts.namespace);
   }
   private path(serverId: string) {
     return `${this.collection()}/${this.name(serverId)}`;
   }
 
-  private async call(method: string, path: string, body?: unknown) {
-    try {
-      return await undiciFetch(new URL(path, this.opts.apiUrl), {
-        method,
-        headers: {
-          authorization: `Bearer ${await this.token()}`,
-          accept: "application/json",
-          ...(body ? { "content-type": "application/json" } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        dispatcher: this.dispatcher,
-        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 5_000),
-      });
-    } catch (err) {
-      const cause = (err as { cause?: { code?: string } }).cause?.code;
-      throw new K8sApiError(0, `Kubernetes API unreachable (${cause ?? (err as Error).name})`);
-    }
+  private call(method: string, path: string, body?: unknown) {
+    return this.client.request(method, path, body);
   }
 
-  private async json(res: Awaited<ReturnType<typeof undiciFetch>>) {
+  private async json(res: Awaited<ReturnType<K8sClient["request"]>>) {
     return (await res.json()) as {
       data?: Record<string, unknown>;
       items?: unknown[];
@@ -157,18 +125,7 @@ export class K8sSecretStore implements CredentialStore {
     };
   }
 
-  private async fail(res: Awaited<ReturnType<typeof undiciFetch>>, verb: string): Promise<never> {
-    // Status + the API's own message ("secrets is forbidden: ..."), which names
-    // resources but never contains secret data.
-    let reason = "";
-    try {
-      reason = String(((await res.json()) as { message?: string }).message ?? "").slice(0, 200);
-    } catch {
-      /* not JSON */
-    }
-    throw new K8sApiError(
-      res.status,
-      `Kubernetes API refused to ${verb} secret (HTTP ${res.status}): ${reason}`,
-    );
+  private fail(res: Awaited<ReturnType<K8sClient["request"]>>, verb: string): Promise<never> {
+    return this.client.fail(res, `${verb} secret`);
   }
 }
