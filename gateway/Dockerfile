@@ -28,6 +28,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY --from=build /app/gateway/dist gateway/dist
 COPY gateway/package.json gateway/
+# The provisioner (same image, `node gateway/dist/provisioner/main.js`) installs
+# stores with the Helm chart's own bootstrap scripts.
+COPY helm/charts/store/files gateway/store-files
 USER node
 EXPOSE 8080
 CMD ["node", "gateway/dist/index.js"]

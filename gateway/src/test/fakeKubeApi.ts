@@ -157,7 +157,20 @@ export async function startFakeKubeApi(token = "test-token"): Promise<FakeKubeAp
       const { plural, namespace: ns, name, sub } = p;
       const store = bucket(plural, ns);
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
-      const stamp = (obj: FakeObject, existing?: FakeObject): FakeObject => ({
+      const stamp = (input: FakeObject, existing?: FakeObject): FakeObject => {
+        // Like the API server: stringData is write-only, folded into base64 data.
+        const { stringData, ...obj } = input as FakeObject & {
+          stringData?: Record<string, string>;
+        };
+        if (stringData) {
+          obj.data = { ...obj.data };
+          for (const [k, v] of Object.entries(stringData)) {
+            obj.data[k] = Buffer.from(v, "utf8").toString("base64");
+          }
+        }
+        return stampMeta(obj, existing);
+      };
+      const stampMeta = (obj: FakeObject, existing?: FakeObject): FakeObject => ({
         ...obj,
         ...(existing?.status && !obj.status ? { status: existing.status } : {}),
         metadata: {

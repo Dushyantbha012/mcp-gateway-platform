@@ -8,8 +8,10 @@ import { sql, type Kysely } from "kysely";
  * `mcp_servers.managed_by` marks server rows the provisioner owns: the admin
  * API refuses to edit or delete them, so the two never fight over a row.
  *
- * Every insert/update of a store NOTIFYs `stores_changed`, so the provisioner
- * picks up a new store at once instead of on its next tick.
+ * Creating a store, and every status change (delete, retry), NOTIFYs
+ * `stores_changed`, so the provisioner acts at once instead of on its next
+ * tick. Progress updates (step, reason) don't, or the provisioner's own
+ * writes would keep waking it.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
@@ -43,8 +45,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       perform pg_notify('stores_changed', new.id::text);
       return new;
     end $$;
-    create trigger stores_notify after insert or update on stores
+    create trigger stores_notify_insert after insert on stores
       for each row execute function stores_notify();
+    create trigger stores_notify_status after update on stores
+      for each row when (old.status is distinct from new.status)
+      execute function stores_notify();
   `.execute(db);
 }
 
