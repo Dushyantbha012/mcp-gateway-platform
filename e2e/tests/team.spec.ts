@@ -37,6 +37,7 @@ test("two users: admin invites a member, the member connects an MCP client, the 
     "Overview",
     "Chat",
     "Servers",
+    "Stores",
     "Tools",
     "Approvals",
     "API keys",
