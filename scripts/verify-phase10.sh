@@ -45,7 +45,8 @@ mcp() {
   curl -s -X POST "$GW/mcp" -H "Authorization: Bearer $ADMIN_KEY" \
     -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d "$1"
 }
-store_field() { api /stores | jsonget "next((s['$2'] or '') for s in d['stores'] if s['slug'] == '$1')"; }
+# "" when the store doesn't exist (or the field is null).
+store_field() { api /stores | jsonget "next(((s['$2'] or '') for s in d['stores'] if s['slug'] == '$1'), '')"; }
 
 step "The provisioner is least-privileged and unreachable"
 PROV_SA="system:serviceaccount:$NS:$RELEASE-gateway-provisioner"
@@ -127,7 +128,7 @@ for s in "${STORES[@]}" woocommerce; do
   n=$(jsonget 'len(__import__("json").loads(d["result"]["content"][0]["text"]).get("products", []))' <<<"$out" 2>/dev/null || echo "?")
   echo "ok: ${s}__list_products answered ($n products)"
 done
-api /servers | jsonget '"\n".join(f"  {s[\"slug\"]:12} managedBy={s[\"managedBy\"]} status={s[\"status\"]}" for s in d)'
+api /servers | jsonget '"\n".join("  %-12s managedBy=%s status=%s" % (s["slug"], s["managedBy"], s["status"]) for s in d)'
 code=$(api "/servers/$(store_field acme serverId)" -o /dev/null -w '%{http_code}' -X PATCH -d '{"name":"x"}')
 [ "$code" = 409 ] || fail "editing a store's managed server answered HTTP $code"
 echo "ok: the admin API refuses to edit a store's managed server (409)"
