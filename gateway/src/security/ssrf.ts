@@ -40,6 +40,34 @@ export function policyFrom(allowedHosts: string[]): SsrfPolicy {
   return { allowedHosts: new Set(allowedHosts.map(normalizeHost)) };
 }
 
+/**
+ * Services the provisioner creates: <service>.store-<slug> or .mcp-<slug>,
+ * in-cluster. The admin API can't write managed rows, and the shape check
+ * means even a tampered row can't aim the exception at kube-system or Postgres.
+ */
+const MANAGED_HOST =
+  /^[a-z0-9]([-a-z0-9]*[a-z0-9])?\.(store|mcp)-[a-z][a-z0-9-]{1,30}\.svc\.cluster\.local$/;
+
+/**
+ * The policy for one upstream: a server row the provisioner manages may reach
+ * its own in-cluster Service (and nothing else private); every other row gets
+ * `policy` unchanged.
+ */
+export function policyForServer(
+  policy: SsrfPolicy,
+  server: { url: string; managed_by: string | null },
+): SsrfPolicy {
+  if (!server.managed_by || policy.permissive) return policy;
+  let host: string;
+  try {
+    host = normalizeHost(new URL(server.url).hostname);
+  } catch {
+    return policy;
+  }
+  if (!MANAGED_HOST.test(host)) return policy;
+  return { ...policy, allowedHosts: new Set([...policy.allowedHosts, host]) };
+}
+
 const blocked = new BlockList();
 const v4: [string, number, string][] = [
   ["0.0.0.0", 8, "this-network"],

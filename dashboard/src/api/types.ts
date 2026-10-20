@@ -10,7 +10,7 @@ export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "disabled" | "unknown";
 export type AuditOutcome =
   "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
-export type AuditSource = "mcp" | "chat";
+export type AuditSource = "mcp" | "chat" | "dashboard";
 
 export interface User {
   id: string;

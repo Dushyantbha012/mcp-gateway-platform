@@ -9,7 +9,8 @@ export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "unknown";
 export type AuditOutcome =
   "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
-export type AuditSource = "mcp" | "chat";
+/** "dashboard": actions taken in the dashboard itself, e.g. creating a store. */
+export type AuditSource = "mcp" | "chat" | "dashboard";
 
 export interface UsersTable {
   id: Generated<string>;

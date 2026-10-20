@@ -101,6 +101,21 @@ export class StoreReconciler {
       await updateStore(this.deps.db, store.id, { deadline_at: deadline, namespace: ns });
     }
 
+    // A retry: the failed Job is immutable, so remove it and let the
+    // bootstrap step create a fresh one (the script picks up where it stopped).
+    if (store.step === "retry") {
+      const job = await kube.get(bootstrapJob(spec, t));
+      if (job) {
+        if (!job.metadata.deletionTimestamp) await kube.delete(job);
+        const reason = "removing the failed bootstrap Job";
+        if (store.reason !== reason) {
+          store.reason = reason;
+          await transitionStore(this.deps.db, store.id, ["provisioning"], { reason });
+        }
+        return "waiting";
+      }
+    }
+
     const steps: Step[] = [
       {
         name: "namespace",

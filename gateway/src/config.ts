@@ -68,6 +68,11 @@ const schema = z
     SEED_WOOCOMMERCE_URL: optionalString.pipe(z.url().optional()),
     SEED_WOOCOMMERCE_TOKEN: optionalString,
     // Public storefront URL of the seeded store, shown on the Stores page.
+    // Multi-store: users create stores from the dashboard; a separate
+    // provisioner pod builds them. Off = the Stores page is read-only.
+    STORES_ENABLED: envBoolean,
+    STORES_MAX_PER_USER: z.coerce.number().int().min(0).max(20).default(2),
+    STORES_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(900),
     SEED_STORE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
     // Public URLs, from Helm values. DASHBOARD_URL builds invite links;
     // PUBLIC_MCP_URL is shown to members as "point your MCP client here".
@@ -206,6 +211,7 @@ export interface Config {
   chat?: ChatConfig;
   bootstrapAdmin?: { email: string; apiKey: string; password?: string };
   seedWoocommerce?: { url: string; token: string; storeUrl?: string };
+  stores: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
 }
 
 /** Parses and validates env; throws one readable error listing every problem. */
@@ -290,6 +296,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             password: e.BOOTSTRAP_ADMIN_PASSWORD,
           }
         : undefined,
+    stores: {
+      enabled: e.STORES_ENABLED,
+      maxPerUser: e.STORES_MAX_PER_USER,
+      timeoutSeconds: e.STORES_TIMEOUT_SECONDS,
+    },
     seedWoocommerce:
       e.SEED_WOOCOMMERCE_URL && e.SEED_WOOCOMMERCE_TOKEN
         ? {

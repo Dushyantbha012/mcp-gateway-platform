@@ -5,14 +5,19 @@ import type { NewStore, Store, StoreStatus, StoreUpdate } from "./schema.js";
 /** A store with its owner's email, as the API lists it. */
 export type StoreWithOwner = Store & { owner_email: string | null };
 
-export function listStores(db: Db): Promise<StoreWithOwner[]> {
-  return db
+const withOwner = (db: Db) =>
+  db
     .selectFrom("stores")
     .leftJoin("users", "users.id", "stores.owner_id")
     .selectAll("stores")
-    .select("users.email as owner_email")
-    .orderBy("stores.created_at")
-    .execute();
+    .select("users.email as owner_email");
+
+export function listStores(db: Db): Promise<StoreWithOwner[]> {
+  return withOwner(db).orderBy("stores.created_at").execute();
+}
+
+export function getStoreWithOwner(db: Db, id: string): Promise<StoreWithOwner | undefined> {
+  return withOwner(db).where("stores.id", "=", id).executeTakeFirst();
 }
 
 export function getStore(db: Db, id: string): Promise<Store | undefined> {

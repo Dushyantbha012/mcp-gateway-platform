@@ -38,6 +38,7 @@ export function buildTestApp(
     metrics?: boolean;
     /** Hold MCP writes until approved in the dashboard (the production default). */
     holdMcpWrites?: boolean;
+    stores?: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
   } = {},
 ) {
   const credentials = new MemoryCredentialStore();
@@ -46,7 +47,11 @@ export function buildTestApp(
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const metrics = opts.metrics ? new GatewayMetrics(() => listServers(db)) : undefined;
   const router = new ToolRouter(db, registry, metrics, "allowAll", opts.holdMcpWrites);
-  const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
+  const config = {
+    auth: { ...testAuthConfig, ...auth },
+    trustProxyHops: opts.trustProxyHops ?? 0,
+    stores: opts.stores ?? { enabled: true, maxPerUser: 2, timeoutSeconds: 900 },
+  };
   const deps = {
     db,
     credentials,

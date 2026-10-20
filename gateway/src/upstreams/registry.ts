@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CredentialStore, StoredCredential } from "../credentials/store.js";
 import type { McpServer } from "../db/schema.js";
-import type { SsrfPolicy } from "../security/ssrf.js";
+import { policyForServer, type SsrfPolicy } from "../security/ssrf.js";
 import { UpstreamConnection, UpstreamError, type UpstreamConfig } from "./connection.js";
 
 interface RegistryOptions {
@@ -37,7 +37,10 @@ export class UpstreamRegistry {
     const existing = this.entries.get(server.id);
     if (existing?.fingerprint === fingerprint) return existing.conn;
     if (existing) void existing.conn.close();
-    const conn = new UpstreamConnection(this.configFor(server, credential), this.opts);
+    const conn = new UpstreamConnection(this.configFor(server, credential), {
+      ...this.opts,
+      ssrf: policyForServer(this.opts.ssrf, server),
+    });
     this.entries.set(server.id, { fingerprint, conn });
     return conn;
   }
@@ -123,6 +126,7 @@ function fingerprintOf(server: McpServer, credential: StoredCredential | null): 
         server.auth_header_name,
         credential?.version ?? null,
         server.timeout_ms,
+        server.managed_by,
       ]),
     )
     .digest("hex");

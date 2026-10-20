@@ -194,6 +194,26 @@ describe.skipIf(!hasTestDb)("store reconciler", () => {
     );
   });
 
+  it("on retry, clears the failed Job and runs a fresh one", async () => {
+    const r = reconciler();
+    const store = await newStore("acme");
+    await pass(r, store);
+    controllers("acme").allReady();
+    await pass(r, store); // creates the Job
+    kube.setStatus("jobs", "store-acme", "bootstrap", {
+      conditions: [{ type: "Failed", status: "True", reason: "DeadlineExceeded" }],
+    });
+    expect(await pass(r, store)).toBe("failed");
+
+    await transitionStore(t.db, store.id, ["failed"], { status: "provisioning", step: "retry" });
+    expect(await pass(r, store)).toBe("waiting"); // the Job is gone now
+    expect(kube.get("jobs", "store-acme", "bootstrap")).toBeUndefined();
+    await pass(r, store); // a fresh Job
+    expect(kube.get("jobs", "store-acme", "bootstrap")?.status).toBeUndefined();
+    controllers("acme").jobDone();
+    expect(await pass(r, store)).toBe("ready");
+  });
+
   it("explains a stuck pod, then times out naming the step and the condition", async () => {
     const r = reconciler();
     const store = await newStore("acme");

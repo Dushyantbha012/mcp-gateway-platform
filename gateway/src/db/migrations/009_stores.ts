@@ -15,6 +15,11 @@ import { sql, type Kysely } from "kysely";
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
+    -- Store actions (create, delete, retry) are audited next to tool calls.
+    alter table audit_log drop constraint audit_log_source_check;
+    alter table audit_log add constraint audit_log_source_check
+      check (source in ('mcp', 'chat', 'dashboard'));
+
     alter table mcp_servers add column managed_by text
       check (managed_by in ('store', 'hosted'));
 
@@ -58,5 +63,8 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     drop table stores;
     drop function stores_notify();
     alter table mcp_servers drop column managed_by;
+    delete from audit_log where source = 'dashboard';
+    alter table audit_log drop constraint audit_log_source_check;
+    alter table audit_log add constraint audit_log_source_check check (source in ('mcp', 'chat'));
   `.execute(db);
 }
