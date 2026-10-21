@@ -657,70 +657,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 | Observability (metrics, request IDs, unreachable reasons, Grafana + alerts) | Done | `gateway/src/metrics/`, `gateway/src/requestContext.ts`, `docs/observability/` |
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
 | Production-like VPS deployment | Values documented, **not deployed** | `helm/values-prod.yaml` (placeholders), `docs/SYSTEM_DESIGN.md` §8 |
-| Scaling (multi-replica, rate limits) | Partial: stateless API, `gateway.replicas` works; rate limits are per pod | README "Known limitations" |
+| Scaling (multi-replica, rate limits) | Partial: stateless API, `gateway.replicas` works; rate limits are per pod | Rate limits are per gateway pod (login, chat) |
 | OAuth on the gateway (Claude Code, MCP Inspector, claude.ai) | Done | `gateway/src/oauth/`, `gateway/src/db/oauth.ts`, `dashboard/src/pages/OAuthConsentPage.tsx`, `scripts/verify-oauth.sh`; README "Stores, hosted MCP servers and OAuth" |
 | Hosted MCP servers (deploy an image; stdio through a bridge) | Done | `gateway/src/provisioner/hostedReconciler.ts`, `gateway/src/provisioner/manifests/hosted.ts`, `mcp-bridge/`, `scripts/verify-hosted.sh` |
 | Multi-store provisioning (bonus) | Done | `gateway/src/provisioner/`, `gateway/src/api/stores.ts`, Stores page, `scripts/verify-phase10.sh`; `docs/SYSTEM_DESIGN.md` §10 |
-
-## Known limitations
-
-- **Stores and hosted servers.** Provisioning a store takes a few minutes (it
-  downloads WooCommerce) and two or three at once strain a laptop, hence the
-  per-user cap and tight quotas. Local DNS needs a hosts line per store. Hosted
-  stdio images are served by a glibc or musl build of the bridge (the admin picks
-  one). Hosted images are untrusted code: the allowlist, Pod Security, no
-  ServiceAccount token and default-deny networking contain them, but a hosted
-  server with internet egress can still reach any public host.
-- **OAuth.** Public clients only (no client secrets), one resource (`/mcp`), two
-  scopes. Registration is open but rate limited (20 per IP per hour), so any
-  client can register; only the user's click on the consent page grants anything.
-  `TRUST_PROXY_HOPS` (default 1) must match the proxies in front of the gateway, or every client shares one rate-limit bucket.
-  Client ID Metadata Documents are not supported, only dynamic registration.
-- **No outgoing email.** The WordPress container has no mail server, so
-  WooCommerce's order emails ("New order", "Processing order") fail and
-  leave a note on each order: _"Email ... failed to send: Could not
-  instantiate mail function"_. Orders are unaffected. Real email would need
-  an SMTP service (e.g. an SMTP plugin configured from a Secret), which is
-  out of scope for this assignment. The same goes for dashboard invites:
-  the admin copies the invite link and sends it themselves.
-- **Chat history lives in the browser.** Refreshing the page starts a new
-  conversation, and only the text of earlier turns (not their tool calls) is
-  sent back to the model.
-- **Approvals are per call, not per tool**, for the chat agent and MCP clients
-  alike (see "Approving writes"). The prompt shows the arguments plus the
-  upstream's own description and hints; the gateway cannot know more about what an
-  upstream does than the upstream says. An MCP client has to retry after the user
-  approves (the transport is stateless, so the gateway can't ask mid-call). Members are
-  read-only by default, so a write tool
-  (WooCommerce's `create_product`, `update_order_status`, GitHub's writes) works
-  for a member only after an admin Allows it; an upstream tool without a
-  `readOnlyHint` counts as a write tool. An Allow on a whole server also covers
-  tools added later. The GitHub upstream also uses a read-only token, so its
-  write tools are rejected by GitHub (HTTP 403) even if allowed.
-- **GitHub and DeepWiki are external.** The suite needs internet access and
-  can fail for reasons that aren't ours (DeepWiki down, GitHub token
-  expired); the gateway then marks that one server Unreachable and the rest
-  keep working.
-- **Chat limits are per gateway pod** (turns per minute per user, in
-  memory), like the login limiter, and the free model tiers have rate and daily caps.
-- **Login rate limiting is per gateway pod** (in memory). With more
-  replicas an attacker gets that many times the attempts; a shared store
-  (or a rate limit at the ingress) would fix it and is not done.
-- **Prompt injection is reduced, not solved.** Descriptions and results from
-  upstreams are cleaned of invisible characters and comments, capped in size,
-  flagged with a gateway notice when they read like instructions to the model,
-  and (in chat) fenced as untrusted data (`gateway/src/security/untrusted.ts`,
-  threat model section 3). The detection is keyword-based and can be evaded
-  by rephrasing, so the real limits are still the user's permissions, per-call
-  approval of writes, the audit log and GitHub's read-only token. Flags are not
-  yet shown in the dashboard.
-- **The SSRF guard resolves names with the cluster resolver.** A resolver that
-  lies is out of scope; the egress NetworkPolicy (no private ranges) is the
-  second wall behind the code check.
-- **Credentials rotate on other replicas within about 5 seconds** (a short
-  cache avoids a Kubernetes API call per tool call).
-- **`/metrics` is unauthenticated.** It carries tool and server names and call counts, never arguments or results. It is not on the Ingress; restrict who in the cluster can reach port 8080 with the NetworkPolicy (`global.networkPolicy.metricsScrape`).
-- **Request IDs stop at the gateway.** They are in logs and audit rows but not forwarded to upstream servers, so an upstream's own logs can't be matched to a gateway request.
-- **Audit rows for `search_tools`** carry the query and match count in the
-  audit log's detail line and no server; `tools/list` is not audited.
-- **Tool search is keyword-based.** `search_tools` matches words in names, arguments and descriptions (with simple plural and prefix matching), not meaning, so a query like "refund" won't find a tool described only as "reverse a payment".
