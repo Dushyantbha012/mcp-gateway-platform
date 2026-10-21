@@ -4,16 +4,21 @@ import type { ApiKey, Role } from "./schema.js";
 
 /**
  * Everything a request needs to know about who is calling. MCP clients
- * authenticate with an API key; the dashboard with a session cookie. Exactly
- * one of keyId / sessionId is set, matching authMethod.
+ * authenticate with an API key or an OAuth access token; the dashboard with a
+ * session cookie. keyId, sessionId or oauth is set, matching authMethod.
  */
 export interface Principal {
   userId: string;
   email: string;
   role: Role;
-  authMethod: "api_key" | "session";
+  authMethod: "api_key" | "session" | "oauth";
   keyId: string | null;
   sessionId: string | null;
+  /**
+   * Set for an OAuth access token: the client acting for the user, and what
+   * the user let it do. Scopes only narrow - the user's role and rules still apply.
+   */
+  oauth?: { tokenId: string; clientId: string; scopes: string[] };
 }
 
 /** Key metadata safe to return to clients: never the hash. */
