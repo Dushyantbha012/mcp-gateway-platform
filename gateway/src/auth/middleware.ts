@@ -1,8 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
 import { hashApiKey, looksLikeApiKey } from "../crypto/apiKeys.js";
+import { looksLikeAccessToken, sameResource, sha256 } from "../crypto/oauth.js";
 import { hashToken, looksLikeToken } from "../crypto/tokens.js";
 import { findPrincipalByKeyHash, touchApiKey, type Principal } from "../db/apiKeys.js";
 import type { Db } from "../db/db.js";
+import { findPrincipalByAccessHash, touchAccessToken } from "../db/oauth.js";
 import { findPrincipalBySessionHash, touchSession } from "../db/sessions.js";
 import { log } from "../logger.js";
 
@@ -13,8 +15,25 @@ export function principalOf(res: Response): Principal {
 
 type ErrorStyle = "jsonrpc" | "rest";
 
-function sendError(res: Response, style: ErrorStyle, status: 401 | 403, message: string) {
-  if (status === 401) res.set("WWW-Authenticate", 'Bearer realm="mcp-gateway"');
+function sendError(
+  res: Response,
+  style: ErrorStyle,
+  status: 401 | 403,
+  message: string,
+  oauth?: { resourceMetadataUrl: string; error: boolean } | false,
+) {
+  if (status === 401) {
+    // With OAuth on, a client that sent no credentials gets just the
+    // metadata pointer; one whose token failed also gets error=invalid_token
+    // (RFC 6750 section 3.1), so it knows to refresh or sign in again.
+    res.set(
+      "WWW-Authenticate",
+      oauth
+        ? `Bearer resource_metadata="${oauth.resourceMetadataUrl}"` +
+            (oauth.error ? ', error="invalid_token"' : "")
+        : 'Bearer realm="mcp-gateway"',
+    );
+  }
   if (style === "jsonrpc") {
     res.status(status).json({ jsonrpc: "2.0", error: { code: -32001, message }, id: null });
   } else {
@@ -68,6 +87,12 @@ export interface AuthOptions {
   /** Accept the dashboard's session cookie as well as API keys. */
   allowSession: boolean;
   allowedOrigins?: readonly string[];
+  /**
+   * Also accept OAuth access tokens issued for `resource`, and point clients
+   * without a valid token at the protected-resource metadata (RFC 9728
+   * section 5.1), which is how an MCP client discovers where to sign in.
+   */
+  oauth?: { resource: string; resourceMetadataUrl: string };
 }
 
 /**
@@ -90,11 +115,46 @@ export function requireAuth(db: Db, opts: AuthOptions) {
     const header = req.headers.authorization;
     if (header !== undefined || !opts.allowSession) {
       const key = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+      if (opts.oauth && looksLikeAccessToken(key)) {
+        const found = await findPrincipalByAccessHash(db, sha256(key));
+        // A token for another resource is refused, so one minted for some
+        // other service can't be replayed here (RFC 8707, audience check).
+        if (!found || !sameResource(found.resource, opts.oauth.resource)) {
+          sendError(res, opts.style, 401, "Invalid, expired or revoked access token", {
+            ...opts.oauth,
+            error: true,
+          });
+          return;
+        }
+        const principal: Principal = {
+          userId: found.userId,
+          email: found.email,
+          role: found.role,
+          authMethod: "oauth",
+          keyId: null,
+          sessionId: null,
+          oauth: found.oauth,
+        };
+        res.locals.principal = principal;
+        touchAccessToken(db, principal.oauth!.tokenId).catch((err) =>
+          log("warn", "could not record token use", { error: String(err) }),
+        );
+        next();
+        return;
+      }
       const principal = looksLikeApiKey(key)
         ? await findPrincipalByKeyHash(db, hashApiKey(key))
         : undefined;
       if (!principal) {
-        sendError(res, opts.style, 401, "Missing, invalid or revoked API key");
+        sendError(
+          res,
+          opts.style,
+          401,
+          opts.oauth
+            ? "Missing, invalid or revoked API key or access token"
+            : "Missing, invalid or revoked API key",
+          opts.oauth && { ...opts.oauth, error: header !== undefined },
+        );
         return;
       }
       res.locals.principal = principal;

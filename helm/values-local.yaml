@@ -52,6 +52,10 @@ gateway:
       # This repo's own images (imported into k3d), e.g. woocommerce-mcp as an
       # http server in scripts/verify-hosted.sh.
       - docker.io/mcp-gateway/
+  # OAuth for MCP clients: `claude mcp add --transport http urumi http://gateway.local.test/mcp`
+  # then sign in through the dashboard (scripts/verify-oauth.sh).
+  oauth:
+    enabled: true
 
 dashboard:
   ingress:

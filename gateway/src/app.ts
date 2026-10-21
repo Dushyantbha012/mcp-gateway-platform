@@ -95,11 +95,18 @@ export function createApp(deps: AppDeps) {
     app.use("/oauth", oauthServer(deps.db, oauth));
   }
 
-  // MCP clients authenticate with API keys only. The session cookie is
-  // scoped to /api, and isn't accepted here even if sent.
+  // MCP clients authenticate with API keys, or OAuth access tokens when OAuth
+  // is on. The session cookie is scoped to /api, and isn't accepted here even if sent.
   app.use(
     "/mcp",
-    requireAuth(deps.db, { style: "jsonrpc", allowSession: false }),
+    requireAuth(deps.db, {
+      style: "jsonrpc",
+      allowSession: false,
+      oauth: oauth && {
+        resource: oauth.resource,
+        resourceMetadataUrl: `${oauth.issuer}/.well-known/oauth-protected-resource/mcp`,
+      },
+    }),
     mcpRouter(tools),
   );
 

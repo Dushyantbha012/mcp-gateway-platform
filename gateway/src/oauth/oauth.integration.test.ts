@@ -1,10 +1,17 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sha256 } from "../crypto/oauth.js";
 import { findPrincipalByAccessHash } from "../db/oauth.js";
+import { insertServer } from "../db/servers.js";
+import { startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
 import {
   buildTestApp,
+  checkUntilConnected,
   TEST_ORIGIN,
   testOAuthConfig,
   userWithKey,
@@ -87,9 +94,9 @@ describe.skipIf(!hasTestDb)("OAuth authorization server", () => {
   });
 
   /** The whole browser part: pending -> approve -> code. */
-  async function code(scope?: string, scopes?: string[]) {
+  async function code(scope?: string, scopes?: string[], role: "admin" | "member" = "member") {
     const p = await pending(scope);
-    const user = await loggedIn();
+    const user = await loggedIn(role);
     const res = await consentFor(user.cookie).decide(p.reqId, { approve: true, scopes });
     expect(res.status).toBe(200);
     const back = new URL(res.body.redirectUrl);
@@ -101,8 +108,8 @@ describe.skipIf(!hasTestDb)("OAuth authorization server", () => {
   const token = (body: Record<string, string>) =>
     request(gw.app).post("/oauth/token").type("form").send(body);
 
-  async function tokens() {
-    const c = await code();
+  async function tokens(scope?: string, role: "admin" | "member" = "member") {
+    const c = await code(scope, undefined, role);
     const res = await token({
       grant_type: "authorization_code",
       client_id: c.client,
@@ -496,6 +503,147 @@ describe.skipIf(!hasTestDb)("OAuth authorization server", () => {
       expect((await request(gw.app).post("/oauth/revoke").send({ token: "whatever" })).status).toBe(
         200,
       );
+    });
+  });
+
+  describe("/mcp as the resource server", () => {
+    let upstream: FakeUpstream;
+    let http: Server;
+    let mcpUrl: string;
+
+    beforeAll(async () => {
+      upstream = await startFakeUpstream({
+        toolNames: ["list_orders", "create_order"],
+        readOnlyTools: ["list_orders"],
+      });
+      await insertServer(t.db, {
+        id: randomUUID(),
+        slug: "shop",
+        name: "Shop",
+        url: upstream.url,
+        timeout_ms: 10_000,
+      });
+      await checkUntilConnected(gw);
+      http = gw.app.listen(0, "127.0.0.1");
+      await new Promise((resolve) => http.once("listening", resolve));
+      mcpUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`;
+    });
+    afterAll(async () => {
+      http?.closeAllConnections();
+      await new Promise((resolve) => http?.close(resolve));
+      await upstream?.close();
+    });
+
+    async function connect(bearer: string) {
+      const client = new Client({ name: "oauth-test", version: "1.0.0" });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(mcpUrl), {
+          requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+        }),
+      );
+      return client;
+    }
+    const names = async (client: Client) =>
+      (await client.listTools()).tools.map((x) => x.name).filter((x) => x.startsWith("shop__"));
+    const text = (r: Awaited<ReturnType<Client["callTool"]>>) =>
+      (r.content as { type: string; text: string }[])[0].text;
+
+    it("serves tools to an access token, as its user", async () => {
+      const c = await tokens();
+      const client = await connect(c.access);
+      expect((await names(client)).sort()).toEqual(
+        ["shop__big", "shop__create_order", "shop__fail", "shop__list_orders"].sort(),
+      );
+      const r = await client.callTool({ name: "shop__create_order", arguments: { value: "1" } });
+      expect(r.isError).toBeFalsy();
+      expect(text(r)).toBe("create_order:1");
+      await client.close();
+
+      const audit = await t.db
+        .selectFrom("audit_log")
+        .selectAll()
+        .where("user_id", "=", c.user.user.id)
+        .where("source", "=", "mcp")
+        .execute();
+      expect(audit).toMatchObject([
+        { tool_name: "shop__create_order", outcome: "success", api_key_id: null },
+      ]);
+    });
+
+    it("mcp:read hides and refuses tools that change data, even for an admin", async () => {
+      const c = await tokens("mcp:read", "admin");
+      const client = await connect(c.access);
+      expect(await names(client)).toEqual(["shop__list_orders"]);
+      expect(text(await client.callTool({ name: "shop__list_orders", arguments: {} }))).toBe(
+        "list_orders:",
+      );
+      const before = upstream.calls.create_order ?? 0;
+      const refused = await client.callTool({ name: "shop__create_order", arguments: {} });
+      expect(refused.isError).toBe(true);
+      expect(text(refused)).toMatch(/only granted read access \(mcp:read\)/);
+      expect(upstream.calls.create_order ?? 0).toBe(before);
+      await client.close();
+    });
+
+    it("401s point at the metadata; a bad token also says invalid_token", async () => {
+      const init = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "x", version: "1" },
+        },
+      };
+      const post = (auth?: string) => {
+        const r = request(gw.app).post("/mcp").set("Accept", "application/json, text/event-stream");
+        if (auth) r.set("Authorization", auth);
+        return r.send(init);
+      };
+      const metadata =
+        'Bearer resource_metadata="http://gateway.test/.well-known/oauth-protected-resource/mcp"';
+
+      const none = await post();
+      expect(none.status).toBe(401);
+      expect(none.headers["www-authenticate"]).toBe(metadata);
+
+      const fake = `mgo_${randomBytes(32).toString("base64url")}`;
+      for (const auth of [`Bearer ${fake}`, "Bearer garbage"]) {
+        const bad = await post(auth);
+        expect(bad.status).toBe(401);
+        expect(bad.headers["www-authenticate"]).toBe(`${metadata}, error="invalid_token"`);
+      }
+
+      // API keys keep working next to OAuth.
+      const k = await userWithKey(t.db, `k${++n}@example.com`, "member");
+      expect((await post(`Bearer ${k.key}`)).status).toBe(200);
+    });
+
+    it("refuses revoked tokens, and tokens for another resource", async () => {
+      const a = await tokens();
+      await request(gw.app).post("/oauth/revoke").send({ token: a.refresh });
+      await expect(connect(a.access)).rejects.toThrow();
+
+      const b = await tokens();
+      await t.db
+        .updateTable("oauth_tokens")
+        .set({ resource: "https://other.example.com/mcp" })
+        .where("hash", "=", sha256(b.access))
+        .execute();
+      await expect(connect(b.access)).rejects.toThrow();
+    });
+
+    it("with OAuth off, an access token is just an invalid key", async () => {
+      const c = await tokens();
+      const off = buildTestApp(t.db);
+      const res = await request(off.app)
+        .post("/mcp")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${c.access}`)
+        .send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(res.status).toBe(401);
+      expect(res.headers["www-authenticate"]).toBe('Bearer realm="mcp-gateway"');
     });
   });
 });

@@ -23,6 +23,16 @@ export interface ToolInfo {
   idempotent?: boolean;
 }
 
+/**
+ * What an OAuth grant's scopes allow, for every role: they only narrow what
+ * the user could do anyway. API keys and sessions carry no scopes.
+ */
+export function scopeAllows(principal: Principal, readOnly: boolean): boolean {
+  const scopes = principal.oauth?.scopes;
+  if (!scopes) return true;
+  return scopes.includes(readOnly ? "mcp:read" : "mcp:write");
+}
+
 export interface CallContext {
   principal: Principal;
   source: AuditSource;
@@ -71,9 +81,14 @@ export class ToolRouter {
   async listTools(principal: Principal): Promise<Tool[]> {
     const servers = await listServers(this.db);
     const index = indexOf(servers.filter((s) => s.enabled && s.status === "connected"));
-    if (principal.role === "admin") return index.tools;
+    // Scopes first: role rules skip admins entirely, scopes don't.
+    const scoped = index.tools.filter((t) => {
+      const route = index.routes.get(t.name);
+      return route !== undefined && scopeAllows(principal, route.readOnly);
+    });
+    if (principal.role === "admin") return scoped;
     const rules = await rulesFor(this.db, principal);
-    return index.tools.filter((t) => {
+    return scoped.filter((t) => {
       const route = index.routes.get(t.name);
       return (
         route !== undefined &&
@@ -187,6 +202,11 @@ export class ToolRouter {
           ? `Server '${known.slug}' is disabled`
           : `Unknown tool '${name}'. ${ctx.unknownToolHint ?? "Call tools/list to see available tools."}`;
       return finish("rejected", errorResult(message), known?.slug ?? null, message);
+    }
+
+    if (!scopeAllows(ctx.principal, route.readOnly)) {
+      const message = `'${name}' changes data, and this app was only granted read access (mcp:read)`;
+      return finish("denied", errorResult(message), server.slug, message);
     }
 
     // Checked before anything reaches the upstream, with rules read now: a
