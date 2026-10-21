@@ -28,6 +28,21 @@ gateway:
     image: ghcr.io/CHANGE_ME/gateway:0.4.0
   # https:// -> the session cookie also gets the Secure flag.
   dashboardUrl: https://dashboard.CHANGE_ME.example
+  seedWoocommerce:
+    storeUrl: https://store.CHANGE_ME.example
+  # Multi-store. Needs a wildcard DNS record *.stores.<domain> -> the
+  # VPS; cert-manager then issues one certificate per store (HTTP-01).
+  stores:
+    enabled: true
+    template:
+      baseDomain: stores.change-me.example # CHANGE_ME (lowercase: it becomes hostnames)
+      tls: true
+      ingressAnnotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+      storageClassName: local-path
+      woocommerceMcp:
+        image: ghcr.io/CHANGE_ME/woocommerce-mcp:0.2.0
+        imagePullPolicy: IfNotPresent
 
 dashboard:
   ingress:

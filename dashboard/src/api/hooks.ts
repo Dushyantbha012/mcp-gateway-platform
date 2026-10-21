@@ -16,6 +16,8 @@ import type {
   RuleEffect,
   Server,
   ServerInput,
+  Store,
+  StoreList,
   Stats,
   StatsRange,
   User,
@@ -32,6 +34,7 @@ export const keys = {
   me: ["me"] as const,
   meta: ["meta"] as const,
   servers: ["servers"] as const,
+  stores: ["stores"] as const,
   tools: ["tools"] as const,
   users: ["users"] as const,
   userKeys: (userId: string) => ["users", userId, "keys"] as const,
@@ -301,5 +304,43 @@ export function useDecideApproval() {
     mutationFn: ({ id, approve }: { id: string; approve: boolean }) =>
       api<void>(`/approvals/${id}/${approve ? "approve" : "deny"}`, { method: "POST" }),
     onSuccess: () => invalidate(keys.approvals),
+  });
+}
+
+const STORE_POLL_MS = 3_000;
+
+/** Polled quickly while any store is still changing, slowly otherwise. */
+export function useStores() {
+  return useQuery({
+    queryKey: keys.stores,
+    queryFn: () => api<StoreList>("/stores"),
+    refetchInterval: (query) =>
+      query.state.data?.stores.some((s) => s.status === "provisioning" || s.status === "deleting")
+        ? STORE_POLL_MS
+        : POLL_MS * 3,
+  });
+}
+
+export function useCreateStore() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (input: { name: string }) => api<Store>("/stores", { method: "POST", body: input }),
+    onSuccess: () => invalidate(keys.stores),
+  });
+}
+
+export function useDeleteStore() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<Store>(`/stores/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidate(keys.stores, keys.servers, keys.tools),
+  });
+}
+
+export function useRetryStore() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<Store>(`/stores/${id}/retry`, { method: "POST" }),
+    onSuccess: () => invalidate(keys.stores),
   });
 }

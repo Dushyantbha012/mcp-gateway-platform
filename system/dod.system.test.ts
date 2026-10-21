@@ -30,8 +30,12 @@ const env = {
   wooDeployment: process.env.MCP_DEPLOYMENT ?? "platform-store-woocommerce-mcp",
 };
 const enabled = Object.entries(env).every(([, v]) => Boolean(v));
+// Optional: run the chat steps on another configured provider ("gemini"), e.g.
+// when the default one's daily free-tier quota is used up. Unset = the default.
+const chatProvider = process.env.SYSTEM_CHAT_PROVIDER || undefined;
 
-type Outcome = "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied";
+type Outcome =
+  "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
 type Source = "mcp" | "chat";
 interface Expected {
   tool: string;
@@ -115,6 +119,29 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
   const textOf = (r: CallToolResult) =>
     r.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 
+  /**
+   * A tool without readOnlyHint counts as a write, and the gateway holds an MCP
+   * client's write until its user approves it in the dashboard (DeepWiki's tools
+   * carry no hint). Plays both sides: the client is held, the user approves the
+   * exact request, the client calls again and it runs. Both calls are audited.
+   */
+  async function callAfterApproval(
+    p: Person,
+    c: Client,
+    name: string,
+    args: Record<string, unknown>,
+  ) {
+    const held = await call(p, c, name, args, "held");
+    const id = /request ([0-9a-f-]{36})/.exec(textOf(held))?.[1];
+    expect(id, `held message for ${name}: ${textOf(held)}`).toBeTruthy();
+    const approved = await fetch(`${env.dashboard}/api/approvals/${id}/approve`, {
+      method: "POST",
+      headers: { Cookie: p.cookie!, Origin: env.dashboard! },
+    });
+    expect(approved.status).toBe(204);
+    return call(p, c, name, args, "success");
+  }
+
   async function createPerson(label: string): Promise<Person> {
     const email = `dod-${label}-${run}@example.com`;
     const invited = await post("/users", { email, name: `DoD ${label.toUpperCase()}` });
@@ -146,7 +173,7 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     const messages = [{ role: "user", text: message }];
     const events: ChatEvent[] = [];
     let approved: { name: string; args: unknown }[] | undefined;
-    // Groq's free tier allows ~8000 tokens a minute; a turn it cuts off is sent
+    // Groq's free tier allows ~8000 tokens a minute (and Gemini has the odd 503); a turn cut off is sent
     // again once the window has passed (the same request, so nothing runs twice
     // except reads that already ran).
     let waits = 0;
@@ -159,7 +186,11 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
           Cookie: p.cookie!,
           Origin: env.dashboard!,
         },
-        body: JSON.stringify({ messages, ...(approved ? { approved } : {}) }),
+        body: JSON.stringify({
+          messages,
+          ...(approved ? { approved } : {}),
+          ...(chatProvider ? { provider: chatProvider } : {}),
+        }),
       });
       expect(res.status).toBe(200);
       const held: { name: string; args: unknown }[] = [];
@@ -170,7 +201,10 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
         turn.push(e);
         if (e.type === "confirm") held.push({ name: e.name!, args: e.args });
       }
-      const limited = turn.some((e) => e.type === "error" && e.code === "rate_limited");
+      // A rate limit, or the provider briefly down (HTTP 503 "unavailable"): wait and resend.
+      const limited = turn.some(
+        (e) => e.type === "error" && (e.code === "rate_limited" || e.code === "unavailable"),
+      );
       if (limited && waits++ < 3) {
         events.push(...turn.filter((e) => e.type !== "error"));
         await new Promise((r) => setTimeout(r, 65_000));
@@ -299,8 +333,10 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
 
   it("Chat as user A: 'create a product' puts it on the storefront", async () => {
     productName = `DoD Mug ${run}`;
-    const events = await chatUntil(a, `Create a product named "${productName}" priced 9.75`, (ev) =>
-      called(ev).includes("woocommerce__create_product"),
+    const events = await chatUntil(
+      a,
+      `Create a product named "${productName}" priced 9.75 in the default store (woocommerce__ tools)`,
+      (ev) => called(ev).includes("woocommerce__create_product"),
     );
     // A tool that changes data is held for the user's approval before it runs.
     const kinds = events
@@ -335,7 +371,7 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
   it("Chat as user A: 'what orders came in today?' returns that order", async () => {
     const events = await chatUntil(
       a,
-      "What orders came in today? Give the order numbers.",
+      "What orders came in today in the default store (woocommerce__ tools)? Give the order numbers.",
       (ev) =>
         called(ev).includes("woocommerce__list_orders") &&
         ev.some((e) => e.type === "text" && e.text!.includes(String(orderId))),
@@ -367,13 +403,9 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     const client = await connect(b.key);
     const products = await call(b, client, "woocommerce__list_products", {}, "success");
     expect(textOf(products)).toContain(productName);
-    const wiki = await call(
-      b,
-      client,
-      "deepwiki__read_wiki_structure",
-      { repoName: "woocommerce/woocommerce" },
-      "success",
-    );
+    const wiki = await callAfterApproval(b, client, "deepwiki__read_wiki_structure", {
+      repoName: "woocommerce/woocommerce",
+    });
     expect(textOf(wiki)).toMatch(/WooCommerce/i);
     const me = await call(b, client, "github__get_me", {}, "success");
     expect(textOf(me)).toContain("login");
@@ -385,7 +417,7 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
     const events = await chatUntil(
       a,
       "Use DeepWiki to look up the structure of the woocommerce/woocommerce repository, " +
-        "and also list the products in my store. Mention one thing from each.",
+        "and also list the products in my store (the woocommerce__ tools). Mention one thing from each.",
       (ev) => {
         const names = called(ev);
         return (
@@ -503,13 +535,9 @@ describe.skipIf(!enabled)("system: the definition of done", () => {
       expect(woo.lastError).toBeTruthy();
 
       await call(a, client, "github__get_me", {}, "success");
-      await call(
-        a,
-        client,
-        "deepwiki__read_wiki_structure",
-        { repoName: "woocommerce/woocommerce" },
-        "success",
-      );
+      await callAfterApproval(a, client, "deepwiki__read_wiki_structure", {
+        repoName: "woocommerce/woocommerce",
+      });
       const dead = await call(a, client, "woocommerce__list_orders", {}, "unreachable");
       expect(textOf(dead)).toMatch(/woocommerce/i);
       expect(await serverStatus("deepwiki")).toBe("connected");

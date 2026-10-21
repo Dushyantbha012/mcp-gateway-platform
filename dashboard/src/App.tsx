@@ -17,6 +17,7 @@ import { KeysPage } from "@/pages/KeysPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { ServersPage } from "@/pages/ServersPage";
+import { StoresPage } from "@/pages/StoresPage";
 import { TeamPage } from "@/pages/TeamPage";
 import { ToolsPage } from "@/pages/ToolsPage";
 
@@ -95,6 +96,7 @@ export function AppRoutes() {
         <Route index element={<OverviewPage />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="servers" element={<ServersPage />} />
+        <Route path="stores" element={<StoresPage />} />
         <Route path="tools" element={<ToolsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="keys" element={<KeysPage />} />

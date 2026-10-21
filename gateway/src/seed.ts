@@ -56,9 +56,9 @@ async function seedAdmin(db: Db, admin: { email: string; apiKey: string; passwor
 async function seedWoocommerce(
   db: Db,
   credentials: CredentialStore,
-  wc: { url: string; token: string },
+  wc: { url: string; token: string; storeUrl?: string },
 ) {
-  if (await getServerBySlug(db, "woocommerce")) return;
+  if (await getServerBySlug(db, "woocommerce")) return seedDefaultStore(db, wc);
   const id = randomUUID();
   await credentials.put(id, wc.token);
   await insertServer(db, {
@@ -75,4 +75,33 @@ async function seedWoocommerce(
       if (err.code !== "23505") throw err;
     });
   log("info", "seeded upstream server", { slug: "woocommerce" });
+  await seedDefaultStore(db, wc);
+}
+
+/**
+ * The Helm-installed store, listed on the Stores page next to provisioned
+ * ones. It is `kind: default`: the provisioner never touches it and it can't
+ * be deleted from the dashboard (it belongs to the Helm release).
+ */
+async function seedDefaultStore(db: Db, wc: { url: string; storeUrl?: string }) {
+  const server = await getServerBySlug(db, "woocommerce");
+  if (!server) return;
+  // In-cluster MCP URLs look like http://<svc>.<namespace>.svc.cluster.local:3000/mcp.
+  const host = new URL(wc.url).hostname.split(".");
+  const namespace = host.length >= 3 && host[2] === "svc" ? host[1] : null;
+  const inserted = await db
+    .insertInto("stores")
+    .values({
+      slug: server.slug,
+      name: "Default store",
+      kind: "default",
+      status: "ready",
+      namespace,
+      url: wc.storeUrl ?? null,
+      server_id: server.id,
+    })
+    .onConflict((oc) => oc.doNothing())
+    .returning("id")
+    .executeTakeFirst();
+  if (inserted) log("info", "seeded default store", { slug: server.slug });
 }

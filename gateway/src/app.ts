@@ -8,6 +8,7 @@ import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
 import { permissionsApi } from "./api/permissions.js";
 import { serversApi } from "./api/servers.js";
+import { storesApi } from "./api/stores.js";
 import { usersApi } from "./api/users.js";
 import { principalOf, requireAuth } from "./auth/middleware.js";
 import type { Config } from "./config.js";
@@ -30,7 +31,7 @@ export interface AppDeps {
   router: ToolRouter;
   /** Which upstream URLs may be registered (SSRF guard). */
   ssrf: SsrfPolicy;
-  config: Pick<Config, "auth" | "trustProxyHops">;
+  config: Pick<Config, "auth" | "trustProxyHops"> & Partial<Pick<Config, "stores">>;
   /** The chat agent's model and limits; absent = chat switched off (503). */
   chat?: ChatSetup;
   /** Prometheus metrics; absent = no /metrics endpoint. */
@@ -110,6 +111,13 @@ export function createApp(deps: AppDeps) {
     });
   });
   api.use("/servers", serversApi(deps));
+  api.use(
+    "/stores",
+    storesApi(
+      deps.db,
+      deps.config.stores ?? { enabled: false, maxPerUser: 0, timeoutSeconds: 900 },
+    ),
+  );
   api.use("/approvals", approvalsApi(deps.db, tools));
   api.use("/permissions", permissionsApi(deps.db, deps.router.memberDefault));
   api.use("/audit", auditApi(deps.db));

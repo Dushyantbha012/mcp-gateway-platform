@@ -6,7 +6,7 @@ import { queryAudit } from "../db/audit.js";
 import { upsertRule } from "../db/permissions.js";
 import { insertServer } from "../db/servers.js";
 import { startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
-import { buildTestApp, userWithKey } from "../test/testApp.js";
+import { buildTestApp, checkUntilConnected, userWithKey } from "../test/testApp.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 
 function parseSse(body: string): ChatEvent[] {
@@ -56,7 +56,7 @@ describe.skipIf(!hasTestDb)("POST /api/chat in search mode", () => {
         },
       },
     );
-    await gw.health.checkAll();
+    await checkUntilConnected(gw);
     alice = await userWithKey(t.db, "alice@example.com", "member");
   });
   afterAll(async () => {

@@ -20,6 +20,12 @@ import {
 import { dateTime, duration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+const SOURCE_LABELS: Record<AuditSource, string> = {
+  mcp: "MCP",
+  chat: "Chat",
+  dashboard: "Dashboard",
+};
+
 export function AuditPage() {
   const [filters, setFilters] = useState<AuditFilters>({});
   const [live, setLive] = useState(true);
@@ -91,6 +97,7 @@ export function AuditPage() {
           <option value="">All sources</option>
           <option value="mcp">MCP client</option>
           <option value="chat">Chat agent</option>
+          <option value="dashboard">Dashboard</option>
         </NativeSelect>
         <Input
           aria-label="Filter by request ID"
@@ -128,7 +135,7 @@ export function AuditPage() {
                   {dateTime(e.ts)}
                 </TableCell>
                 <TableCell data-label="User">{e.userEmail}</TableCell>
-                <TableCell data-label="Source">{e.source === "chat" ? "Chat" : "MCP"}</TableCell>
+                <TableCell data-label="Source">{SOURCE_LABELS[e.source]}</TableCell>
                 <TableCell data-label="Server">{e.server ?? "-"}</TableCell>
                 <TableCell data-label="Tool">
                   <code className="text-xs">{e.tool}</code>

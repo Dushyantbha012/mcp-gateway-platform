@@ -44,6 +44,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "006_audit_request_id",
       "007_audit_detail",
       "008_write_approvals",
+      "009_stores",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -57,6 +58,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "invites",
       "mcp_servers",
       "sessions",
+      "stores",
       "tool_permissions",
       "users",
       "write_approvals",
@@ -78,6 +80,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "006_audit_request_id",
       "007_audit_detail",
       "008_write_approvals",
+      "009_stores",
     ]);
   });
 });

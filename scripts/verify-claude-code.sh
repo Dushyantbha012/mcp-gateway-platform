@@ -18,7 +18,9 @@ DASH="${DASHBOARD_URL:-http://dashboard.local.test}"
 MODEL="${CLAUDE_MODEL:-sonnet}"
 STAMP=$(date +%s)
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+RULE_ID=""
+# Leave no standing grant behind (verify-phase7.sh checks that only the DeepWiki rule exists).
+trap 'rm -rf "$WORK"; [ -n "$RULE_ID" ] && curl -s -X DELETE -H "Authorization: Bearer $ADMIN_KEY" "$GW/api/permissions/$RULE_ID" >/dev/null || true' EXIT
 fail() { echo "FAILED: $*"; exit 1; }
 step() { echo; echo "== $* =="; }
 command -v claude >/dev/null || fail "the claude CLI is not installed"
@@ -36,8 +38,8 @@ TOKEN=$(json 'd["inviteUrl"].rsplit("/",1)[1]' <<<"$INVITE")
 curl -sf -X POST -H "Origin: $DASH" -H "Content-Type: application/json" \
   -d "{\"password\":\"$PASSWORD\"}" "$GW/api/auth/invites/$TOKEN/accept" >/dev/null
 B_KEY=$(admin -X POST -d '{"name":"claude-code"}' "$GW/api/users/$B_ID/keys" | json 'd["key"]')
-admin -X PUT -d "{\"userId\":\"$B_ID\",\"serverSlug\":\"woocommerce\",\"toolName\":\"create_product\",\"effect\":\"allow\"}" \
-  "$GW/api/permissions" >/dev/null
+RULE_ID=$(admin -X PUT -d "{\"userId\":\"$B_ID\",\"serverSlug\":\"woocommerce\",\"toolName\":\"create_product\",\"effect\":\"allow\"}" \
+  "$GW/api/permissions" | json 'd["id"]')
 JAR="$WORK/jar"
 curl -sf -c "$JAR" -X POST -H "Origin: $DASH" -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" "$GW/api/auth/login" >/dev/null

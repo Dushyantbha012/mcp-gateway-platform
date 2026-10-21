@@ -118,6 +118,39 @@ seedWoocommerce:
   # Empty = the store subchart's in-cluster Service in this release.
   url: ""
   tokenSecret: woocommerce-mcp-auth # key: token
+  # Its public storefront URL, shown on the Stores page (e.g. http://store.local.test).
+  storeUrl: ""
+
+# Multi-store: any user can create up to maxPerUser WooCommerce stores from the
+# dashboard. A separate provisioner Deployment (same image) builds each one in
+# a namespace of its own - store-<slug>, served at <slug>.<template.baseDomain> -
+# and registers its MCP server with the gateway. Off = no provisioner and no
+# cluster-wide RBAC; the Stores page only lists the Helm-installed store.
+stores:
+  enabled: false
+  maxPerUser: 2
+  # A store still not ready after this long is marked failed (with the step it
+  # was stuck at); its owner can retry it.
+  timeoutSeconds: 900
+  provisioner:
+    image: "" # empty = gateway.gateway.image (the provisioner ships in it)
+    # Stores worked on at once (each is mostly waiting on pods).
+    concurrency: 3
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 192Mi }
+  # Everything a provisioned store is built from, passed to the provisioner as
+  # JSON. Every key is optional; defaults (gateway/src/provisioner/template.ts)
+  # match the store subchart: same images, probes and security contexts, with
+  # 1Gi volumes and a tight per-store ResourceQuota. The gateway namespace, MCP
+  # client label, ingress controller and private ranges come from the release.
+  template:
+    baseDomain: store.local.test
+    tls: false
+    ingressAnnotations: {}
+    storageClassName: ""
+    # quota: { requestsCpu: "1", requestsMemory: 1536Mi, limitsCpu: "3", limitsMemory: 3Gi, pods: 8, pvcs: 2, storage: 3Gi }
+    # woocommerceMcp: { image: ..., imagePullPolicy: IfNotPresent }
 
 postgres:
   image: postgres:16.11-alpine

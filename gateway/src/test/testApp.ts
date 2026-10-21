@@ -38,6 +38,7 @@ export function buildTestApp(
     metrics?: boolean;
     /** Hold MCP writes until approved in the dashboard (the production default). */
     holdMcpWrites?: boolean;
+    stores?: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
   } = {},
 ) {
   const credentials = new MemoryCredentialStore();
@@ -46,7 +47,11 @@ export function buildTestApp(
   const health = new HealthChecker(db, registry, { intervalMs: 60_000, listTimeoutMs: 300 });
   const metrics = opts.metrics ? new GatewayMetrics(() => listServers(db)) : undefined;
   const router = new ToolRouter(db, registry, metrics, "allowAll", opts.holdMcpWrites);
-  const config = { auth: { ...testAuthConfig, ...auth }, trustProxyHops: opts.trustProxyHops ?? 0 };
+  const config = {
+    auth: { ...testAuthConfig, ...auth },
+    trustProxyHops: opts.trustProxyHops ?? 0,
+    stores: opts.stores ?? { enabled: true, maxPerUser: 2, timeoutSeconds: 900 },
+  };
   const deps = {
     db,
     credentials,
@@ -74,4 +79,18 @@ export async function userWithPassword(db: Db, email: string, role: Role, passwo
   const user = await createUser(db, { email, name: email.split("@")[0], role });
   await setPasswordHash(db, user.id, await hashPassword(password));
   return { user, email, password };
+}
+
+/**
+ * Health-checks every server until all enabled ones are connected. The test
+ * app gives a check only 300ms, which a fake upstream can miss when the whole
+ * suite runs in parallel; one slow check must not fail an unrelated test.
+ */
+export async function checkUntilConnected(gw: { db: Db; health: HealthChecker }, attempts = 10) {
+  for (let i = 0; i < attempts; i++) {
+    await gw.health.checkAll();
+    const servers = await listServers(gw.db);
+    if (servers.every((s) => !s.enabled || s.status === "connected")) return;
+  }
+  throw new Error("test upstreams never became connected");
 }

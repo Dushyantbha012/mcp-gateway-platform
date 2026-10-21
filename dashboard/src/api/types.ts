@@ -10,7 +10,7 @@ export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "disabled" | "unknown";
 export type AuditOutcome =
   "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
-export type AuditSource = "mcp" | "chat";
+export type AuditSource = "mcp" | "chat" | "dashboard";
 
 export interface User {
   id: string;
@@ -48,9 +48,41 @@ export interface Server {
   authHeaderName: string | null;
   hasCredential: boolean;
   timeoutMs: number;
+  /** Set when the provisioner owns this server; it can't be edited here. */
+  managedBy: "store" | "hosted" | null;
   tools: ServerTool[];
   createdAt: string;
   updatedAt: string;
+}
+
+export type StoreStatus = "provisioning" | "ready" | "failed" | "deleting";
+
+/** storeView in gateway/src/api/stores.ts. */
+export interface Store {
+  id: string;
+  slug: string;
+  name: string;
+  /** "default" = the store installed by Helm; it can't be deleted here. */
+  kind: "default" | "provisioned";
+  status: StoreStatus;
+  /** Where provisioning is (or stopped). */
+  step: string | null;
+  /** What it's waiting on, or why it failed. */
+  reason: string | null;
+  url: string | null;
+  namespace: string | null;
+  serverId: string | null;
+  owner: { id: string; email: string | null } | null;
+  /** The caller may delete / retry it. */
+  canManage: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoreList {
+  enabled: boolean;
+  maxPerUser: number;
+  stores: Store[];
 }
 
 export interface ServerInput {

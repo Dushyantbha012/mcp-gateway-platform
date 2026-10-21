@@ -11,7 +11,7 @@ const querySchema = z.object({
   outcome: z
     .enum(["success", "tool_error", "timeout", "unreachable", "rejected", "denied", "held"])
     .optional(),
-  source: z.enum(["mcp", "chat"]).optional(),
+  source: z.enum(["mcp", "chat", "dashboard"]).optional(),
   requestId: z
     .string()
     .regex(/^[A-Za-z0-9._-]{1,128}$/)

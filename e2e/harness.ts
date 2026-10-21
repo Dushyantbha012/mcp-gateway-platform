@@ -108,6 +108,8 @@ const app = createApp({
   chat: { llm: fakeLlm, turnsPerMinute: 1000, limits: { turnTimeoutMs: 20_000 } },
   config: {
     trustProxyHops: 1,
+    // No provisioner runs here: stores stay where the API puts them.
+    stores: { enabled: true, maxPerUser: 2, timeoutSeconds: 900 },
     auth: {
       dashboardUrl: DASHBOARD_ORIGIN,
       publicMcpUrl: `http://127.0.0.1:${GATEWAY_PORT}/mcp`,

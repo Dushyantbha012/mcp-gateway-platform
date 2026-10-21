@@ -8,7 +8,13 @@ import { insertServer, updateServer } from "../db/servers.js";
 import { callTools, FakeLlm, say, type ScriptEntry } from "../chat/fakeLlm.js";
 import type { ChatEvent } from "../chat/types.js";
 import { startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
-import { buildTestApp, TEST_ORIGIN, userWithKey, userWithPassword } from "../test/testApp.js";
+import {
+  buildTestApp,
+  checkUntilConnected,
+  TEST_ORIGIN,
+  userWithKey,
+  userWithPassword,
+} from "../test/testApp.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 
 /** Parses a finished text/event-stream body into its events (comment lines ignored). */
@@ -72,7 +78,7 @@ describe.skipIf(!hasTestDb)("POST /api/chat", () => {
         },
       },
     );
-    await gw.health.checkAll();
+    await checkUntilConnected(gw);
     alice = await userWithKey(t.db, "alice@example.com", "member");
     bob = await userWithKey(t.db, "bob@example.com", "member");
   });

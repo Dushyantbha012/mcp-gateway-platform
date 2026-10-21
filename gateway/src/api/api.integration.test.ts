@@ -235,6 +235,19 @@ describe.skipIf(!hasTestDb)("REST API", () => {
       const res = await as(admin).post(`/api/servers/${id}/refresh`);
       expect(res.body.status).toBe("unreachable");
     });
+
+    it("refuses to edit or delete a server the provisioner manages", async () => {
+      const { id } = await t.db
+        .insertInto("mcp_servers")
+        .values({ slug: "acme", name: "Acme", url: "http://x.io/mcp", managed_by: "store" })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      const patched = await as(admin).patch(`/api/servers/${id}`, { name: "Renamed" });
+      expect(patched.status).toBe(409);
+      expect(patched.body.error.code).toBe("managed_server");
+      expect((await as(admin).delete(`/api/servers/${id}`)).status).toBe(409);
+      expect((await as(admin).get(`/api/servers/${id}`)).body.managedBy).toBe("store");
+    });
   });
 
   describe("users and keys", () => {

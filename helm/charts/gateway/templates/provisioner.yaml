@@ -1,0 +1,160 @@
+{{- if .Values.stores.enabled }}
+{{- $name := printf "%s-provisioner" (include "gateway.fullname" .) -}}
+{{- $gw := include "gateway.fullname" . -}}
+{{- $np := (.Values.global.networkPolicy | default dict) -}}
+{{- $ic := ($np.ingressController | default dict) -}}
+{{- /* The release-derived parts of the store template; anything in stores.template wins. */ -}}
+{{- $derived := dict
+  "gatewayNamespace" .Release.Namespace
+  "mcpClientLabel" .Values.global.mcpClientLabel
+  "ingressClassName" (.Values.global.ingress.className | default "traefik")
+  "internetEgress" (ternary $np.internetEgress true (hasKey $np "internetEgress"))
+-}}
+{{- with $np.privateRanges }}{{- $_ := set $derived "privateRanges" . }}{{- end }}
+{{- if $ic.namespace }}
+{{- $_ := set $derived "ingressController" (dict "namespace" $ic.namespace "podLabels" $ic.podLabels) }}
+{{- end }}
+{{- $template := mergeOverwrite $derived (deepCopy .Values.stores.template) -}}
+# The provisioner turns rows in the `stores` table into WooCommerce stores, one
+# namespace each. It is the only workload that can create namespaces, so it
+# gets a ServiceAccount of its own: the gateway's stays limited to upstream
+# Secrets (rbac.yaml), and a compromised gateway still can't create a pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+automountServiceAccountToken: false # mounted into the provisioner pod only, by its spec
+---
+# Cluster-wide because the namespaces don't exist until it creates them; RBAC
+# can't scope a ClusterRole to "namespaces I made". The provisioner itself
+# refuses to touch any namespace without urumi.ai/managed-by=provisioner.
+# Deliberately absent: list/watch on Secrets, any RBAC objects (it can't grant
+# itself more), pods/exec, nodes, and anything cluster-scoped but namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Store Secrets are create-only; upstream credentials are replaced in place (update).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps", "services", "persistentvolumeclaims", "resourcequotas", "limitranges"]
+    verbs: ["get", "create", "patch"]
+  # Read-only: to explain why a store isn't ready (ImagePullBackOff, ...).
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.selector" (list . "provisioner") | nindent 4 }}
+spec:
+  # One acts at a time (a Postgres advisory lock); a second replica would only stand by.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "gateway.selector" (list . "provisioner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gateway.labels" . | nindent 8 }}
+        {{- include "gateway.selector" (list . "provisioner") | nindent 8 }}
+      annotations:
+        # Roll the pod when the store template changes.
+        checksum/template: {{ toJson $template | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provisioner
+          image: {{ .Values.stores.provisioner.image | default .Values.gateway.image }}
+          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          command: ["node", "gateway/dist/provisioner/main.js"]
+          ports:
+            - name: health
+              containerPort: 8081
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.db }}
+                  key: password
+            - name: DATABASE_URL
+              value: {{ printf "postgres://%s:$(DB_PASSWORD)@%s-postgres:5432/%s" .Values.postgres.user $gw .Values.postgres.database | quote }}
+            - name: UPSTREAM_SECRETS_NAMESPACE
+              value: {{ .Values.upstreamSecrets.namespace | quote }}
+            - name: STORES_TIMEOUT_SECONDS
+              value: {{ .Values.stores.timeoutSeconds | quote }}
+            - name: PROVISIONER_CONCURRENCY
+              value: {{ .Values.stores.provisioner.concurrency | quote }}
+            - name: PROVISIONER_PORT
+              value: "8081"
+            - name: STORES_TEMPLATE
+              value: {{ toJson $template | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Healthy and ready while waiting for the lock, too: a standby isn't
+          # broken. (No Service routes to it; readiness is for rollouts.)
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.stores.provisioner.resources | nindent 12 }}
+{{- end }}

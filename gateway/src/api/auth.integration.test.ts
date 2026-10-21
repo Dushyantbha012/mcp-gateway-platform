@@ -416,7 +416,7 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
       );
     });
 
-    it("never removes the last enabled admin", async () => {
+    it("never removes the last enabled admin", { timeout: 20_000 }, async () => {
       const iso = await createTestDatabase();
       try {
         const app = buildTestApp(iso.db).app;

@@ -9,7 +9,8 @@ export type AuthType = "none" | "bearer" | "header";
 export type ServerStatus = "connected" | "unreachable" | "unknown";
 export type AuditOutcome =
   "success" | "tool_error" | "timeout" | "unreachable" | "rejected" | "denied" | "held";
-export type AuditSource = "mcp" | "chat";
+/** "dashboard": actions taken in the dashboard itself, e.g. creating a store. */
+export type AuditSource = "mcp" | "chat" | "dashboard";
 
 export interface UsersTable {
   id: Generated<string>;
@@ -51,6 +52,31 @@ export interface McpServersTable {
   last_checked_at: Date | null;
   tools_cache: ToolsCache;
   tools_cached_at: Date | null;
+  /** Set when the provisioner owns this row (a store's or hosted server's MCP endpoint). */
+  managed_by: ManagedBy | null;
+  created_at: CreatedAt;
+  updated_at: Generated<Date>;
+}
+
+export type ManagedBy = "store" | "hosted";
+export type StoreKind = "default" | "provisioned";
+export type StoreStatus = "provisioning" | "ready" | "failed" | "deleting";
+
+export interface StoresTable {
+  id: Generated<string>;
+  slug: string;
+  name: string;
+  owner_id: string | null;
+  kind: Generated<StoreKind>;
+  status: Generated<StoreStatus>;
+  /** The last provisioning step reached (shown while provisioning, and in failures). */
+  step: string | null;
+  reason: string | null;
+  namespace: string | null;
+  /** Public storefront URL. */
+  url: string | null;
+  server_id: string | null;
+  deadline_at: Date | null;
   created_at: CreatedAt;
   updated_at: Generated<Date>;
 }
@@ -126,6 +152,7 @@ export interface Database {
   invites: InvitesTable;
   tool_permissions: ToolPermissionsTable;
   write_approvals: WriteApprovalsTable;
+  stores: StoresTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -139,3 +166,6 @@ export type ToolPermissionRow = Selectable<ToolPermissionsTable>;
 export type WriteApproval = Selectable<WriteApprovalsTable>;
 export type AuditEntry = Selectable<AuditLogTable>;
 export type NewAuditEntry = Insertable<AuditLogTable>;
+export type Store = Selectable<StoresTable>;
+export type NewStore = Insertable<StoresTable>;
+export type StoreUpdate = Updateable<StoresTable>;

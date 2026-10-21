@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { blockedReason, checkUrl, createGuardedFetch, policyFrom, SsrfError } from "./ssrf.js";
+import {
+  blockedReason,
+  checkUrl,
+  createGuardedFetch,
+  policyForServer,
+  policyFrom,
+  SsrfError,
+} from "./ssrf.js";
 
 const policy = (map: Record<string, string[]> = {}, allowed: string[] = []) => ({
   ...policyFrom(allowed),
@@ -145,5 +152,34 @@ describe("createGuardedFetch", () => {
     expect(calls).toBeGreaterThanOrEqual(2);
     // the connect-time lookup refused the second answer
     expect((err as { cause?: unknown }).cause).toBeInstanceOf(SsrfError);
+  });
+});
+
+describe("policyForServer", () => {
+  const base = policyFrom([]);
+  const mcp = "http://woocommerce-mcp.store-acme.svc.cluster.local:3000/mcp";
+  const resolve = async () => ["10.43.0.12"];
+
+  it("lets a managed row reach its own in-cluster service", async () => {
+    const policy = { ...policyForServer(base, { url: mcp, managed_by: "store" }), resolve };
+    await expect(checkUrl(mcp, policy)).resolves.toBeInstanceOf(URL);
+    // ...and only that one.
+    await expect(
+      checkUrl("http://woocommerce-mcp.store-globex.svc.cluster.local:3000/mcp", policy),
+    ).rejects.toBeInstanceOf(SsrfError);
+  });
+
+  it("gives unmanaged rows no exception, even for the same URL", async () => {
+    const policy = { ...policyForServer(base, { url: mcp, managed_by: null }), resolve };
+    await expect(checkUrl(mcp, policy)).rejects.toBeInstanceOf(SsrfError);
+  });
+
+  it.each([
+    "http://postgres.urumi.svc.cluster.local:5432/",
+    "http://kubernetes.default.svc.cluster.local/",
+    "http://store-acme.svc.cluster.local/",
+    "http://10.43.0.12:3000/mcp",
+  ])("never extends the exception to %s, even on a managed row", (url) => {
+    expect(policyForServer(base, { url, managed_by: "store" })).toBe(base);
   });
 });
