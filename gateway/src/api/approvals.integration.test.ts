@@ -5,7 +5,12 @@ import { insertApiKey } from "../db/apiKeys.js";
 import { queryAudit } from "../db/audit.js";
 import { insertServer } from "../db/servers.js";
 import { startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
-import { buildTestApp, TEST_ORIGIN, userWithPassword } from "../test/testApp.js";
+import {
+  buildTestApp,
+  checkUntilConnected,
+  TEST_ORIGIN,
+  userWithPassword,
+} from "../test/testApp.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 
 interface RpcResult {
@@ -48,7 +53,7 @@ describe.skipIf(!hasTestDb)("MCP write approvals", () => {
     });
     await insertServer(t.db, { slug: "shop", name: "Shop", url: shop.url, timeout_ms: 2_000 });
     gw = buildTestApp(t.db, {}, { holdMcpWrites: true });
-    await gw.health.checkAll();
+    await checkUntilConnected(gw);
     const u = await userWithPassword(t.db, "ann@example.com", "member", "correct horse battery");
     userId = u.user.id;
     key = generateApiKey().key;

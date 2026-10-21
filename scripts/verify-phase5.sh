@@ -186,7 +186,9 @@ echo "ok"
 
 PRODUCT="Verify5 Mug $(date +%s)"
 step "Exit criterion 1: 'create a product named X priced Y' -> it is on the storefront; events are streamed through Traefik"
-chat_admin "Create a product named \"$PRODUCT\" priced 7.25" --approve >"$OUT"
+# Every prompt names the store: with several stores (multi-store), "create a product"
+# alone is ambiguous and the model may rightly pick another store's tool.
+chat_admin "Create a product named \"$PRODUCT\" priced 7.25 in the default store (its tools are named woocommerce__...)." --approve >"$OUT"
 echo "events: $(event_types)"
 called | grep -qx "woocommerce__create_product" || fail "agent didn't call woocommerce__create_product: $(cat "$OUT")"
 python3 - "$OUT" <<'PY' || fail "events were not streamed incrementally"
@@ -216,7 +218,7 @@ assert ps[0]['prices']['price']=='725', ps[0]['prices']
 print('storefront shows', ps[0]['name'], ps[0]['prices']['price'])" || fail "product not on the storefront"
 
 step "Exit criterion 2 (automated half): 'what orders came in today' -> the agent calls list_orders and answers"
-chat_admin "What orders came in today?" >"$OUT"
+chat_admin "What orders came in today in the default store (its tools are named woocommerce__...)?" >"$OUT"
 echo "events: $(event_types)"
 called | grep -qx "woocommerce__list_orders" || fail "agent didn't call woocommerce__list_orders"
 python3 - "$OUT" <<'PY' || fail "no clean answer"
@@ -236,7 +238,7 @@ token=$(jsonget 'd["inviteUrl"].rsplit("/",1)[1]' <<<"$invite")
 accepted=$(curl -s -c "$JAR_MEMBER" -H "Origin: $DASH" -H "Content-Type: application/json" \
   -d "$(printf '{"password":"%s"}' "$MEMBER_PASSWORD")" "$DASH/api/auth/invites/$token/accept")
 MEMBER_ID=$(jsonget 'd["id"]' <<<"$accepted")
-chat_member "List the products in the store." >"$OUT"
+chat_member "List the products in the default store (its tools are named woocommerce__...)." >"$OUT"
 called | grep -qx "woocommerce__list_products" || fail "member's agent didn't call list_products: $(cat "$OUT")"
 as_admin "/audit?source=chat&limit=100" | MEMBER_EMAIL="$MEMBER_EMAIL" ADMIN_EMAIL="$ADMIN_EMAIL" python3 -c '
 import json, os, sys
@@ -254,7 +256,7 @@ as_admin "/servers/$WOO_ID" -X PATCH -d '{"enabled":false}' >/dev/null
 # the agent may use their tools; it must never be able to use WooCommerce's.
 [ "$(as_admin /tools | jsonget 'sum(1 for t in d if t["name"].startswith("woocommerce__"))')" = "0" ] ||
   fail "woocommerce tools still offered while disabled"
-chat_admin "What orders came in today?" >"$OUT"
+chat_admin "What orders came in today in the default store (its tools are named woocommerce__...)?" >"$OUT"
 called | grep -q "^woocommerce__" && fail "agent called a WooCommerce tool while it was disabled: $(called)"
 python3 - "$OUT" <<'PY' || fail "expected a clean answer without WooCommerce, got: $(cat "$OUT")"
 import json, sys

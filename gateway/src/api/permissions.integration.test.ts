@@ -1,7 +1,7 @@
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { startFakeUpstream, type FakeUpstream } from "../test/fakeUpstream.js";
-import { buildTestApp, userWithKey } from "../test/testApp.js";
+import { buildTestApp, checkUntilConnected, userWithKey } from "../test/testApp.js";
 import { createTestDatabase, hasTestDb, type TestDatabase } from "../test/testDb.js";
 import { insertServer } from "../db/servers.js";
 
@@ -18,7 +18,7 @@ describe.skipIf(!hasTestDb)("/api/permissions", () => {
     gw = buildTestApp(t.db);
     shop = await startFakeUpstream({ toolNames: ["list_orders", "update_order_status"] });
     await insertServer(t.db, { slug: "shop", name: "Shop", url: shop.url, timeout_ms: 2_000 });
-    await gw.health.checkAll();
+    await checkUntilConnected(gw);
     admin = await userWithKey(t.db, "admin@example.com", "admin");
     member = await userWithKey(t.db, "member@example.com", "member");
     other = await userWithKey(t.db, "other@example.com", "member");

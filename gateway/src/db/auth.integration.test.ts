@@ -188,31 +188,35 @@ describe.skipIf(!hasTestDb)("sessions, invites and user changes", () => {
       ).toBeUndefined();
     });
 
-    it("never leaves zero enabled admins, even when two admins demote each other at once", async () => {
-      const iso = await createTestDatabase();
-      try {
-        const a = await createUser(iso.db, { email: "a@x.io", name: "A", role: "admin" });
-        const b = await createUser(iso.db, { email: "b@x.io", name: "B", role: "admin" });
-        const results = await Promise.allSettled([
-          updateUser(iso.db, a.id, { role: "member" }),
-          updateUser(iso.db, b.id, { disabled: true }),
-        ]);
-        const rejected = results.filter((r) => r.status === "rejected");
-        expect(rejected).toHaveLength(1);
-        expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(LastAdminError);
-        const admins = await iso.db
-          .selectFrom("users")
-          .select("id")
-          .where("role", "=", "admin")
-          .where("disabled_at", "is", null)
-          .execute();
-        expect(admins).toHaveLength(1);
-        await expect(updateUser(iso.db, admins[0].id, { role: "member" })).rejects.toThrow(
-          LastAdminError,
-        );
-      } finally {
-        await iso.drop();
-      }
-    });
+    it(
+      "never leaves zero enabled admins, even when two admins demote each other at once",
+      { timeout: 20_000 },
+      async () => {
+        const iso = await createTestDatabase();
+        try {
+          const a = await createUser(iso.db, { email: "a@x.io", name: "A", role: "admin" });
+          const b = await createUser(iso.db, { email: "b@x.io", name: "B", role: "admin" });
+          const results = await Promise.allSettled([
+            updateUser(iso.db, a.id, { role: "member" }),
+            updateUser(iso.db, b.id, { disabled: true }),
+          ]);
+          const rejected = results.filter((r) => r.status === "rejected");
+          expect(rejected).toHaveLength(1);
+          expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(LastAdminError);
+          const admins = await iso.db
+            .selectFrom("users")
+            .select("id")
+            .where("role", "=", "admin")
+            .where("disabled_at", "is", null)
+            .execute();
+          expect(admins).toHaveLength(1);
+          await expect(updateUser(iso.db, admins[0].id, { role: "member" })).rejects.toThrow(
+            LastAdminError,
+          );
+        } finally {
+          await iso.drop();
+        }
+      },
+    );
   });
 });

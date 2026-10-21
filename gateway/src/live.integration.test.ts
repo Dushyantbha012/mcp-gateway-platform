@@ -17,6 +17,8 @@ const env = {
   wcToken: process.env.GATEWAY_LIVE_WC_TOKEN,
 };
 const enabled = Object.values(env).every(Boolean);
+// The Origin the gateway accepts cookie-authenticated changes from (approving a held write).
+const dashboardOrigin = process.env.GATEWAY_LIVE_DASHBOARD_URL ?? "http://dashboard.local.test";
 const WOO_TOOLS = [
   "woocommerce__create_product",
   "woocommerce__get_order",
@@ -194,12 +196,58 @@ describe.skipIf(!enabled)("live: deployed gateway", () => {
     const tools = res.body.tools.map((t: { name: string }) => t.name);
     expect(tools).toContain(`deepwiki-${run}__read_wiki_structure`);
 
-    const client = await connect(env.adminKey!);
-    const result = (await client.callTool({
-      name: `deepwiki-${run}__read_wiki_structure`,
-      arguments: { repoName: "modelcontextprotocol/typescript-sdk" },
-    })) as CallToolResult;
-    expect(result.isError).toBeFalsy();
+    // DeepWiki's tools carry no readOnlyHint, so the gateway treats them as writes
+    // and holds an MCP client's call until its user approves it - which takes a
+    // dashboard session. A fresh admin user plays both sides.
+    const invited = await api("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        email: `live-approver-${run}@example.com`,
+        name: "Live",
+        role: "admin",
+      }),
+    });
+    expect(invited.status, invited.text).toBe(201);
+    const token = String(invited.body.inviteUrl).split("/").pop();
+    const accepted = await fetch(`${env.url}/api/auth/invites/${token}/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: dashboardOrigin },
+      body: JSON.stringify({ password: `live-${run}-${Math.random().toString(36).slice(2)}` }),
+    });
+    expect(accepted.status).toBe(200);
+    const cookie = accepted.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    const key = (
+      await api(`/users/${invited.body.id}/keys`, {
+        method: "POST",
+        body: JSON.stringify({ name: "live" }),
+      })
+    ).body.key as string;
+    try {
+      const client = await connect(key);
+      const call = async () =>
+        (await client.callTool({
+          name: `deepwiki-${run}__read_wiki_structure`,
+          arguments: { repoName: "modelcontextprotocol/typescript-sdk" },
+        })) as CallToolResult;
+      const held = await call();
+      const text = held.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+      const id = /request ([0-9a-f-]{36})/.exec(text)?.[1];
+      expect(id, text).toBeTruthy();
+      const approved = await fetch(`${env.url}/api/approvals/${id}/approve`, {
+        method: "POST",
+        headers: { Cookie: cookie, Origin: dashboardOrigin },
+      });
+      expect(approved.status).toBe(204);
+      expect((await call()).isError).toBeFalsy();
+    } finally {
+      await api(`/users/${invited.body.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ disabled: true }),
+      });
+    }
   }, 60_000);
 
   it("disabling WooCommerce hides its tools and rejects calls; re-enabling restores them", async () => {

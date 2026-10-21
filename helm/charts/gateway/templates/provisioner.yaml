@@ -142,7 +142,13 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          # Healthy while waiting for the lock, too: a standby isn't broken.
+          # Healthy and ready while waiting for the lock, too: a standby isn't
+          # broken. (No Service routes to it; readiness is for rollouts.)
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz

@@ -80,3 +80,17 @@ export async function userWithPassword(db: Db, email: string, role: Role, passwo
   await setPasswordHash(db, user.id, await hashPassword(password));
   return { user, email, password };
 }
+
+/**
+ * Health-checks every server until all enabled ones are connected. The test
+ * app gives a check only 300ms, which a fake upstream can miss when the whole
+ * suite runs in parallel; one slow check must not fail an unrelated test.
+ */
+export async function checkUntilConnected(gw: { db: Db; health: HealthChecker }, attempts = 10) {
+  for (let i = 0; i < attempts; i++) {
+    await gw.health.checkAll();
+    const servers = await listServers(gw.db);
+    if (servers.every((s) => !s.enabled || s.status === "connected")) return;
+  }
+  throw new Error("test upstreams never became connected");
+}

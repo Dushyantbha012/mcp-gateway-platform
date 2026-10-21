@@ -2,10 +2,11 @@
 # Verification for multi-store provisioning against the live k3d cluster:
 # create two stores through the API, watch the provisioner build them, use
 # both through the one gateway endpoint, prove they can't reach each other,
-# then delete one and check nothing of it is left. Re-runnable:
+# then delete them and check nothing of them is left. Re-runnable:
 #   ./scripts/verify-phase10.sh               # build, deploy, verify
 #   SKIP_DEPLOY=1 ./scripts/verify-phase10.sh # reuse what's already deployed
 #   KEEP_STORES=1 ...                         # leave both stores running at the end
+#                                             (otherwise both are deleted)
 #
 # Provisioning downloads WooCommerce, so a cold run takes a few minutes per store
 # (they're built in parallel).
@@ -197,5 +198,16 @@ names=$(mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jsonget '" ".join
 grep -q "globex__" <<<"$names" && fail "globex tools are still listed"
 grep -q "acme__list_orders" <<<"$names" || fail "acme's tools went too"
 echo "ok: store row, namespace, volumes, credential and tools of globex are gone; acme is untouched"
+
+step "Delete acme too: the cluster ends as it started (the chat tests count tokens per tool)"
+code=$(api "/stores/$(store_field acme id)" -o /dev/null -w '%{http_code}' -X DELETE)
+[ "$code" = 202 ] || fail "deleting acme answered HTTP $code"
+for _ in $(seq 1 120); do
+  [ -z "$(store_field acme id)" ] && ! kubectl get ns store-acme >/dev/null 2>&1 && break
+  sleep 3
+done
+[ -z "$(store_field acme id)" ] || fail "acme still listed: $(store_field acme step)"
+kubectl get ns store-acme >/dev/null 2>&1 && fail "namespace store-acme still exists"
+echo "ok"
 
 echo; echo "Phase 10 (multi-store) verified."
