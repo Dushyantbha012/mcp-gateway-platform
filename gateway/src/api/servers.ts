@@ -8,6 +8,7 @@ import type { Db } from "../db/db.js";
 import type { McpServer, McpServerUpdate } from "../db/schema.js";
 import { deleteRulesForServer, renameServerRules } from "../db/permissions.js";
 import { deleteServer, getServer, insertServer, listServers, updateServer } from "../db/servers.js";
+import { slugReserved } from "../db/stores.js";
 import { displayStatus, type HealthChecker } from "../upstreams/health.js";
 import { checkUrl, SsrfError, type SsrfPolicy } from "../security/ssrf.js";
 import { buildToolIndex, SLUG_PATTERN } from "../upstreams/naming.js";
@@ -152,6 +153,16 @@ export function serversApi(deps: {
     }
   };
 
+  const checkSlugFree = async (slug: string) => {
+    if (await slugReserved(db, slug)) {
+      throw new HttpError(
+        409,
+        "conflict",
+        `The name '${slug}' is used by a store or hosted server`,
+      );
+    }
+  };
+
   api.get("/", async (_req, res) => {
     const admin = principalOf(res).role === "admin";
     res.json((await listServers(db)).map((s) => serverView(s, { admin })));
@@ -167,6 +178,7 @@ export function serversApi(deps: {
     const headerName = body.authType === "header" ? (body.authHeaderName ?? null) : null;
     const credential = body.authType === "none" ? null : (body.credential ?? null);
     checkAuth(body.authType, headerName, credential !== null);
+    await checkSlugFree(body.slug);
     await checkTarget(body.url);
     const id = randomUUID(); // known up front: it names the credential's Secret
     // Secret first, row second: a crash in between leaves an unreferenced
@@ -208,6 +220,7 @@ export function serversApi(deps: {
     const hasCredential = authType !== "none" && (body.credential ? true : current.has_credential);
     changes.has_credential = hasCredential;
     checkAuth(authType, changes.auth_header_name ?? null, hasCredential);
+    if (body.slug !== undefined && body.slug !== current.slug) await checkSlugFree(body.slug);
     if (body.url !== undefined) await checkTarget(body.url);
 
     // Write the new credential first, remembering the old one so a failed

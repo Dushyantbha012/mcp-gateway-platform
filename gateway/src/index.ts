@@ -1,10 +1,12 @@
 import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { K8sHostedEnvStore, MemoryHostedEnvStore } from "./credentials/hostedEnv.js";
 import { K8sSecretStore } from "./credentials/k8s.js";
 import { sweepOrphanedCredentials } from "./credentials/sweep.js";
 import { MemoryCredentialStore } from "./credentials/store.js";
 import { createDb, migrate, waitForDatabase } from "./db/db.js";
+import { K8sClient } from "./k8s/client.js";
 import { listServers } from "./db/servers.js";
 import { log } from "./logger.js";
 import { GatewayMetrics } from "./metrics/metrics.js";
@@ -35,9 +37,16 @@ await waitForDatabase(db, {
 });
 const applied = await migrate(db);
 if (applied.length) log("info", "applied migrations", { migrations: applied });
-const credentials = config.upstreamSecretsNamespace
-  ? await K8sSecretStore.inCluster(config.upstreamSecretsNamespace)
-  : new MemoryCredentialStore();
+// One Kubernetes client for both kinds of Secret in the upstream-secrets namespace.
+const k8s = config.upstreamSecretsNamespace ? await K8sClient.inCluster() : undefined;
+const credentials =
+  k8s && config.upstreamSecretsNamespace
+    ? new K8sSecretStore({ apiUrl: "", namespace: config.upstreamSecretsNamespace, client: k8s })
+    : new MemoryCredentialStore();
+const hostedEnv =
+  k8s && config.upstreamSecretsNamespace
+    ? new K8sHostedEnvStore(k8s, config.upstreamSecretsNamespace)
+    : new MemoryHostedEnvStore();
 if (!config.upstreamSecretsNamespace) {
   log("warn", "UPSTREAM_SECRETS_NAMESPACE not set: upstream credentials are kept in memory only");
 }
@@ -117,6 +126,7 @@ log(
 const app = createApp({
   db,
   credentials,
+  hostedEnv,
   registry,
   health,
   router,

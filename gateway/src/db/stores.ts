@@ -34,6 +34,38 @@ export class StoreLimitError extends Error {
   }
 }
 
+/**
+ * Serialises slug claims for the rest of the transaction. Stores, hosted
+ * servers and MCP servers share one slug space (the tool prefix), but live in
+ * three tables, so a unique index can't guard it.
+ */
+export async function lockSlugs(trx: Db): Promise<void> {
+  await sql`select pg_advisory_xact_lock(hashtext('urumi.slugs'))`.execute(trx);
+}
+
+/** Whether a store, hosted server or MCP server already uses `slug`. */
+export async function slugInUse(trx: Db, slug: string): Promise<boolean> {
+  const { rows } = await sql<{ taken: boolean }>`
+    select exists (select 1 from mcp_servers where slug = ${slug})
+        or exists (select 1 from stores where slug = ${slug})
+        or exists (select 1 from hosted_servers where slug = ${slug}) as taken
+  `.execute(trx);
+  return rows[0]!.taken;
+}
+
+/**
+ * Whether a store or hosted server has claimed `slug`: their MCP server rows
+ * appear only once they're ready, so a server added by URL in the meantime
+ * would take the slug from under them.
+ */
+export async function slugReserved(db: Db, slug: string): Promise<boolean> {
+  const { rows } = await sql<{ taken: boolean }>`
+    select exists (select 1 from stores where slug = ${slug})
+        or exists (select 1 from hosted_servers where slug = ${slug}) as taken
+  `.execute(db);
+  return rows[0]!.taken;
+}
+
 export class SlugTakenError extends Error {
   constructor(readonly slug: string) {
     super(`The name '${slug}' is already in use`);
@@ -46,7 +78,8 @@ export class SlugTakenError extends Error {
  *
  * The per-user limit is checked while holding a lock on the owner's row, so
  * two concurrent requests can't both see "1 of 2" and both insert. The slug
- * must also be free among MCP servers: it becomes the store's tool prefix.
+ * must also be free among MCP servers and hosted servers: it becomes the
+ * store's tool prefix.
  */
 export async function createStore(
   db: Db,
@@ -71,12 +104,8 @@ export async function createStore(
       }
       throw new SlugTakenError(store.slug);
     }
-    const server = await trx
-      .selectFrom("mcp_servers")
-      .select("id")
-      .where("slug", "=", store.slug)
-      .executeTakeFirst();
-    if (server) throw new SlugTakenError(store.slug);
+    await lockSlugs(trx);
+    if (await slugInUse(trx, store.slug)) throw new SlugTakenError(store.slug);
     const { count } = await trx
       .selectFrom("stores")
       .select((eb) => eb.fn.countAll<string>().as("count"))

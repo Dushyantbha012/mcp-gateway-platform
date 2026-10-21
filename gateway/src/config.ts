@@ -73,6 +73,12 @@ const schema = z
     STORES_ENABLED: envBoolean,
     STORES_MAX_PER_USER: z.coerce.number().int().min(0).max(20).default(2),
     STORES_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(900),
+    // Hosted MCP servers: admins run allowlisted images, one namespace each,
+    // built by the same provisioner. Entries are repository prefixes
+    // ("docker.io/mcp/") or exact repositories ("ghcr.io/acme/server").
+    HOSTED_ENABLED: envBoolean,
+    HOSTED_IMAGE_ALLOWLIST: commaList,
+    HOSTED_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(600),
     SEED_STORE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
     // Public URLs, from Helm values. DASHBOARD_URL builds invite links;
     // PUBLIC_MCP_URL is shown to members as "point your MCP client here".
@@ -212,6 +218,7 @@ export interface Config {
   bootstrapAdmin?: { email: string; apiKey: string; password?: string };
   seedWoocommerce?: { url: string; token: string; storeUrl?: string };
   stores: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
+  hosted: { enabled: boolean; imageAllowlist: string[]; timeoutSeconds: number };
 }
 
 /** Parses and validates env; throws one readable error listing every problem. */
@@ -300,6 +307,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       enabled: e.STORES_ENABLED,
       maxPerUser: e.STORES_MAX_PER_USER,
       timeoutSeconds: e.STORES_TIMEOUT_SECONDS,
+    },
+    hosted: {
+      enabled: e.HOSTED_ENABLED,
+      imageAllowlist: e.HOSTED_IMAGE_ALLOWLIST,
+      timeoutSeconds: e.HOSTED_TIMEOUT_SECONDS,
     },
     seedWoocommerce:
       e.SEED_WOOCOMMERCE_URL && e.SEED_WOOCOMMERCE_TOKEN
