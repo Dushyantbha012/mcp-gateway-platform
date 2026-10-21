@@ -14,7 +14,8 @@ audit) and the chat agent (a tool loop on Groq's gpt-oss-120b by default, or Gem
 on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
 DeepWiki), the brief's whole definition of done scripted end to end, and
 per-role / per-user tool permissions (members are read-only by default) on top,
-plus SSRF protection, deny-by-default networking, metrics and search-then-execute.
+plus SSRF protection, deny-by-default networking, hygiene for untrusted upstream text
+(prompt-injection mitigation), per-call approval of writes, metrics and search-then-execute.
 On top of that: members can provision their own isolated stores, admins can deploy
 MCP servers from an image, and MCP clients such as Claude Code, MCP Inspector and
 claude.ai can sign in with OAuth.
@@ -27,6 +28,7 @@ woocommerce-mcp/   # our MCP server: 5 tools over Streamable HTTP, talks to the 
 gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API, chat agent
 gateway/src/provisioner/  # the provisioner: builds and deletes stores and hosted MCP servers through the Kubernetes API
 gateway/src/oauth/        # OAuth 2.1 authorization server for MCP clients
+gateway/src/security/     # SSRF guard (ssrf.ts) and hygiene for untrusted upstream text (untrusted.ts)
 mcp-bridge/        # serves a stdio MCP server over Streamable HTTP (for hosted stdio images)
 dashboard/         # React/Vite admin + member UI (Tailwind + shadcn/ui), served by nginx
 e2e/               # Playwright: browser tests against the real gateway + dashboard build, and live storefront checkout
@@ -34,7 +36,7 @@ system/            # the definition-of-done suite: one scripted scenario against
 helm/              # umbrella chart; charts/store = one store (MySQL, WordPress, bootstrap Job, MCP server),
                    #                 charts/gateway = gateway + its Postgres,
                    #                 charts/dashboard = the dashboard (its Ingress sends /api to the gateway)
-scripts/           # create-secrets.sh, register-upstreams.sh, reset-demo.sh, verify-phase*.sh
+scripts/           # create-secrets.sh, register-upstreams.sh, reset-demo.sh, verify-*.sh, netpol_matrix.py, audit-pods.py
 docs/              # system design, threat model, observability (Grafana dashboard + alerts)
 ```
 
@@ -119,6 +121,10 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
    ./scripts/verify-phase7.sh   # tool permissions (re-runs Phase 6 and 2-5)
    ./scripts/verify-phase8.sh   # security hardening (re-runs everything above under default-deny networking)
    ./scripts/verify-claude-code.sh   # a real Claude Code session as a member: read, denied tool, held write, approval
+   ./scripts/verify-encryption.sh    # Secrets are ciphertext in the k3s datastore
+   ./scripts/verify-phase10.sh       # multi-store provisioning (a few minutes per store)
+   ./scripts/verify-hosted.sh        # hosted MCP servers
+   ./scripts/verify-oauth.sh         # OAuth for MCP clients
    ```
 
    Each accepts `SKIP_DEPLOY=1` to check the running deployment without
@@ -208,7 +214,25 @@ an `Origin` the gateway allows on every change):
 | POST | `/api/users/:id/invite` | new invite link — also how an admin resets a password |
 | GET, POST | `/api/users/:id/keys` | list / issue a key - `me` for yourself; the key is shown once |
 | DELETE | `/api/keys/:id` | revoke (admin or the key's owner) |
-| GET | `/api/audit?userId=&server=&outcome=&source=&before=&limit=` | audit log, newest first (admin) |
+| GET | `/api/audit?userId=&server=&outcome=&source=&requestId=&before=&limit=` | audit log, newest first (admin) |
+| GET | `/api/stats` | overview numbers for the dashboard (admin) |
+| GET, PUT, DELETE | `/api/permissions`, `/api/permissions/:id` | tool permission rules (admin) |
+| GET | `/api/permissions/effective?userId=\|role=member` | what a person or role gets, and which rule decides (admin) |
+| GET | `/api/approvals` | write approvals waiting for you |
+| POST | `/api/approvals/:id/approve`, `/api/approvals/:id/deny` | decide one (dashboard session only; an API key gets 403) |
+| POST | `/api/chat` | the chat agent, streamed as Server-Sent Events |
+| GET, POST | `/api/stores` | list / create a store (see "Multi-store provisioning") |
+| GET, DELETE | `/api/stores/:id` | one store / delete it |
+| POST | `/api/stores/:id/retry` | retry a failed store |
+| GET, POST | `/api/hosted` | hosted MCP servers: list / deploy by image (admin) |
+| GET, PATCH, DELETE | `/api/hosted/:id` | one hosted server / edit / remove (admin) |
+| POST | `/api/hosted/:id/retry` | retry a hosted server that failed (admin) |
+| GET, POST | `/api/oauth/requests/:id` | consent page data / approve or deny an OAuth request (dashboard session) |
+| GET, DELETE | `/api/oauth/apps`, `/api/oauth/apps/:id` | apps you connected through OAuth / disconnect one |
+
+OAuth endpoints themselves (`/oauth/*`, `/.well-known/*`) are described under
+"OAuth for MCP clients". `GET /healthz`, `GET /readyz` and `GET /metrics` are
+outside `/api`.
 
 Example - add a server with a bearer credential:
 
@@ -219,8 +243,8 @@ curl -X POST http://gateway.local.test/api/servers \
 ```
 
 Every tool call (from any client) is written to the audit log with user,
-key, server, tool, time, duration and outcome (`success`, `tool_error`,
-`timeout`, `unreachable`, `rejected`, `denied`).
+key, server, tool, time, duration, outcome (`success`, `tool_error`,
+`timeout`, `unreachable`, `rejected`, `denied`) and request ID.
 
 ## Connect more servers (GitHub, DeepWiki)
 
@@ -346,6 +370,13 @@ Ingress sends `/api` to the gateway.
      next call, on every gateway replica. Removing a server deletes its rules;
      renaming its slug moves them.
 
+7. **Overview, Approvals, Stores, Connected apps**: Overview (admin) summarises
+   calls, errors and server health; **Approvals** lists writes waiting for the
+   user's click (see "Approving writes"); **Stores** creates and deletes
+   members' stores; the Servers page can also deploy a server from an image; the
+   API keys page lists OAuth apps you have connected and lets you disconnect them.
+   The sections "Stores, hosted MCP servers and OAuth" below cover these.
+
 Revoking a key (API keys, or a member's keys on Team) rejects its very next
 MCP call; disabling a member ends their dashboard session and keys at once.
 
@@ -438,7 +469,8 @@ Helm: `gateway.search.mode`, `gateway.search.chatMode`, `gateway.search.autoThre
 
 ## Security hardening
 
-Four controls, each tested on its own and re-checked by `./scripts/verify-phase8.sh`:
+Five controls, each tested on its own (the first four are re-checked by
+`./scripts/verify-phase8.sh`):
 
 - **SSRF guard on "add server".** The gateway makes the requests to upstream
   URLs from inside the cluster, so a URL like `http://169.254.169.254/`,
@@ -468,6 +500,20 @@ Four controls, each tested on its own and re-checked by `./scripts/verify-phase8
   `python3 scripts/netpol_matrix.py` prints a 9x10 table of what each workload
   can reach. On a new cluster set `global.networkPolicy.apiServerCidr` to the
   node IP where the API server listens (`kubectl get endpoints kubernetes`).
+- **Untrusted upstream text.** An upstream can put instructions in a tool
+  description or a result ("prompt injection"). The gateway cannot make that
+  harmless, so `gateway/src/security/untrusted.ts` reduces it: invisible content
+  (zero-width and bidi characters, the Unicode tag block, control characters, HTML
+  comments) is stripped from descriptions, schema descriptions and results;
+  descriptions are normalised and capped (2000 characters, 500 per parameter);
+  a description that reads like an instruction to the model ("ignore previous
+  instructions", "don't tell the user", `<IMPORTANT>` tags, "before using any other
+  tool", credential-reading requests) gets a gateway notice prepended, so clients, the
+  chat model and approval prompts all see it; and in chat, upstream results are
+  fenced as `<<<UNTRUSTED TOOL RESULT ...>>>` and the system prompt says nothing
+  inside can change the rules. The patterns are a heuristic that rephrasing can
+  evade; the real limits are the user's permissions, approval of writes and the
+  audit log (see the threat model, section 3).
 - **Restricted pods.** Every container is non-root with a read-only root
   filesystem, no capabilities, a seccomp profile and no ServiceAccount token (the
   gateway aside). The namespace enforces the Pod Security `restricted`
@@ -518,6 +564,8 @@ contexts for the admin/member flow).
 
 Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
 (with a warning); CI always runs them against a Postgres service container.
+With Postgres the full run is about 990 passing tests (24 more need a live
+cluster or model keys and are skipped) plus 15 Playwright scenarios.
 
 ## Stores, hosted MCP servers and OAuth
 
@@ -604,6 +652,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 |---|---|---|
 | Tool permissions (per role / per user, hidden + rejected; read-only member default) | Done | `gateway/src/permissions/`, Permissions page, `docs/SYSTEM_DESIGN.md` §5 |
 | Security hardening: SSRF guard, Secrets for credentials (encrypted at rest by k3s), default-deny NetworkPolicies, non-root pods, least-privilege RBAC | Done | `gateway/src/security/ssrf.ts`, `gateway/src/credentials/`, `helm/templates/networkpolicies.yaml`, `helm/charts/gateway/templates/rbac.yaml`, `scripts/netpol_matrix.py`, `scripts/audit-pods.py`, `scripts/verify-encryption.sh`; [threat model](docs/THREAT_MODEL.md) |
+| Prompt-injection hygiene for untrusted upstream text (strip hidden content, flag instruction-like descriptions, fence chat results) | Done (reduces, does not solve) | `gateway/src/security/untrusted.ts`, [threat model](docs/THREAT_MODEL.md) §3 |
 | Handling many tools (search-then-execute) | Done | `gateway/src/search/`, README "Search-then-execute" |
 | Observability (metrics, request IDs, unreachable reasons, Grafana + alerts) | Done | `gateway/src/metrics/`, `gateway/src/requestContext.ts`, `docs/observability/` |
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
