@@ -28,7 +28,8 @@ A member can *use* a server's tools but never learns its credential:
 
 - The credential is stored as a Kubernetes Secret per server in the dedicated
   `urumi-upstreams` namespace. Postgres records only that one exists
-  (`has_credential`). The gateway's ServiceAccount can manage Secrets in that
+  (`has_credential`). k3s encrypts Secrets at rest (`--secrets-encryption`,
+  checked by `scripts/verify-encryption.sh`). The gateway's ServiceAccount can manage Secrets in that
   namespace only (it cannot read `gateway-db`, list pods or touch other
   namespaces); it is the only pod that mounts a ServiceAccount token.
 - The REST API never returns a credential, to admins either (the edit form leaves
@@ -166,6 +167,11 @@ New actors: **MCP clients that registered themselves** (anyone can register) and
   can change rules; the tool calls they make are still logged. Store, hosted-server
   and OAuth actions are the exception: they are audit rows.
 - **Credentials rotate on other replicas within about 5 s** (short cache).
+- **Encryption at rest has a narrow scope.** It protects the datastore and its
+  backups. Anyone with `get secrets` RBAC, or root on the node, reads plaintext;
+  the AES key (`/var/lib/rancher/k3s/server/cred/encryption-config.json`) is on
+  the same node as the datastore, so back it up separately or a restore cannot
+  decrypt. An external KMS or Vault would remove the shared-node weakness.
 - **No image scanning;** hosted images are pinned but not scanned, and the chart's own images are not digest-pinned; the Groq and Gemini API keys and the WooCommerce
   bearer token are Secrets in the same cluster as the workloads that use them.
 - **A hosted server with internet egress can exfiltrate whatever it was given**

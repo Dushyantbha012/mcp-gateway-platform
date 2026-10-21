@@ -1,5 +1,7 @@
 # Overrides for the production-like VPS (k3s). Real domain, TLS and storage
 # class are filled in during Phase 9 — placeholders for now.
+# The k3s server must be installed with --secrets-encryption so Secrets are
+# encrypted at rest (check: scripts/verify-encryption.sh).
 global:
   networkPolicy:
     # The k3s node's IP where the API server listens (kubectl get endpoints

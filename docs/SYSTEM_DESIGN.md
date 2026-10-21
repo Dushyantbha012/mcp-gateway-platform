@@ -134,7 +134,7 @@ Same charts; only values differ (`helm/values-local.yaml` vs `helm/values-prod.y
 | TLS | none | cert-manager `ClusterIssuer` (Let's Encrypt); `gateway.dashboardUrl` is `https://…`, which turns on the `Secure` cookie flag |
 | Images | `k3d image import mcp-gateway/*:dev` | pushed to a registry; `image:` values point at it, `imagePullPolicy` default |
 | Storage class | `local-path` | `local-path` on single-node k3s, or the provider's class; set `storageClassName` |
-| Secrets | `scripts/create-secrets.sh` (random, never in git) | The same script, different values, run on the VPS; optionally sealed-secrets/SOPS |
+| Secrets | `scripts/create-secrets.sh` (random, never in git); k3d started with `--secrets-encryption` | The same script, different values, run on the VPS; install k3s with `--secrets-encryption` (AES-CBC at rest), back up `/var/lib/rancher/k3s/server/cred/encryption-config.json` separately from the datastore, rotate with `k3s secrets-encrypt rotate-keys`; optionally sealed-secrets/SOPS or a KMS |
 | NetworkPolicy | `global.networkPolicy.apiServerCidr` = k3d node IP | = the VPS node IP (`kubectl get endpoints kubernetes`) |
 | Sizing | small requests/limits | raise via values; `gateway.replicas` > 1 is safe for the API (sessions in Postgres), rate limits are per pod |
 | Upgrades | `helm upgrade --install … -f values.yaml -f values-local.yaml` | same; `helm rollback platform <rev>` (migrations are additive; 005 is the only destructive one) |

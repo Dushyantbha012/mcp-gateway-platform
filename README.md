@@ -45,8 +45,13 @@ Prerequisites: Docker Desktop with **8GB+ memory**, Node 22+, `k3d`, `kubectl`, 
 1. **Cluster** (k3s in Docker, with host ports 80/443 going to Traefik):
 
    ```bash
-   k3d cluster create urumi-mcp --port "80:80@loadbalancer" --port "443:443@loadbalancer"
+   k3d cluster create urumi-mcp --port "80:80@loadbalancer" --port "443:443@loadbalancer" \
+     --k3s-arg "--secrets-encryption@server:*"
    ```
+
+   The last flag turns on encryption at rest for every Kubernetes Secret
+   (upstream credentials, database passwords, LLM keys). Without it Secrets are
+   only base64 in k3s' datastore. `./scripts/verify-encryption.sh` proves it.
 
 2. **Local domains** — add once to `/etc/hosts` (needs sudo):
 
@@ -444,9 +449,14 @@ Four controls, each tested on its own and re-checked by `./scripts/verify-phase8
   and redirects don't get around it. The in-cluster WooCommerce MCP server is
   allowed because its host is allowlisted in Helm (`gateway.ssrf.allowedHosts`
   adds more; nothing in the dashboard or API can). Code: `gateway/src/security/ssrf.ts`.
-- **Credentials are Kubernetes Secrets.** Each upstream's token is one Secret
-  in the `urumi-upstreams` namespace; Postgres only records that a credential
-  exists. The gateway's ServiceAccount may manage Secrets in that namespace and
+- **Credentials are Kubernetes Secrets, encrypted at rest.** Each upstream's
+  token is one Secret in the `urumi-upstreams` namespace; Postgres only records
+  that a credential exists. k3s runs with `--secrets-encryption` (AES-CBC), so
+  the datastore and its backups hold ciphertext, not base64
+  (`./scripts/verify-encryption.sh` reads the raw rows to prove it). That protects
+  against a stolen disk or backup; anyone who can `get secrets` through the API,
+  or is root on the node (the key file sits beside the datastore), still reads
+  plaintext. A KMS or vault is the production upgrade. The gateway's ServiceAccount may manage Secrets in that namespace and
   nothing else (it can't read `gateway-db`, can't list pods), and it is the
   only pod with a ServiceAccount token. Inspect it with
   `kubectl -n urumi-upstreams get secrets` and
@@ -479,6 +489,7 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase7.sh   # the same suite plus its tool-permissions step, live permission/audit checks, then re-runs phases 2-5
 ./scripts/verify-phase10.sh  # multi-store: create two stores, use both, prove they are isolated, delete them (a few minutes: WooCommerce is downloaded per store)
 ./scripts/verify-hosted.sh   # hosted MCP servers: deploy a stdio and an HTTP image, probe the network, delete them
+./scripts/verify-encryption.sh  # Secrets are ciphertext in the k3s datastore
 ./scripts/verify-oauth.sh    # OAuth: discovery, registration, PKCE, scopes, refresh rotation, revoke (curl, no browser)
 ```
 
@@ -592,7 +603,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 | Item from the brief | Status | Where |
 |---|---|---|
 | Tool permissions (per role / per user, hidden + rejected; read-only member default) | Done | `gateway/src/permissions/`, Permissions page, `docs/SYSTEM_DESIGN.md` §5 |
-| Security hardening: SSRF guard, Secrets for credentials, default-deny NetworkPolicies, non-root pods, least-privilege RBAC | Done | `gateway/src/security/ssrf.ts`, `gateway/src/credentials/`, `helm/templates/networkpolicies.yaml`, `helm/charts/gateway/templates/rbac.yaml`, `scripts/netpol_matrix.py`, `scripts/audit-pods.py`; [threat model](docs/THREAT_MODEL.md) |
+| Security hardening: SSRF guard, Secrets for credentials (encrypted at rest by k3s), default-deny NetworkPolicies, non-root pods, least-privilege RBAC | Done | `gateway/src/security/ssrf.ts`, `gateway/src/credentials/`, `helm/templates/networkpolicies.yaml`, `helm/charts/gateway/templates/rbac.yaml`, `scripts/netpol_matrix.py`, `scripts/audit-pods.py`, `scripts/verify-encryption.sh`; [threat model](docs/THREAT_MODEL.md) |
 | Handling many tools (search-then-execute) | Done | `gateway/src/search/`, README "Search-then-execute" |
 | Observability (metrics, request IDs, unreachable reasons, Grafana + alerts) | Done | `gateway/src/metrics/`, `gateway/src/requestContext.ts`, `docs/observability/` |
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
