@@ -15,6 +15,9 @@ on Kubernetes, with three upstream servers connected (WooCommerce, GitHub,
 DeepWiki), the brief's whole definition of done scripted end to end, and
 per-role / per-user tool permissions (members are read-only by default) on top,
 plus SSRF protection, deny-by-default networking, metrics and search-then-execute.
+On top of that: members can provision their own isolated stores, admins can deploy
+MCP servers from an image, and MCP clients such as Claude Code, MCP Inspector and
+claude.ai can sign in with OAuth.
 The production values file is documented but not yet deployed to a real VPS.
 
 ## Layout
@@ -22,6 +25,9 @@ The production values file is documented but not yet deployed to a real VPS.
 ```
 woocommerce-mcp/   # our MCP server: 5 tools over Streamable HTTP, talks to the WooCommerce REST API
 gateway/           # MCP client to every upstream + one MCP endpoint for every caller, REST API, chat agent
+gateway/src/provisioner/  # the provisioner: builds and deletes stores and hosted MCP servers through the Kubernetes API
+gateway/src/oauth/        # OAuth 2.1 authorization server for MCP clients
+mcp-bridge/        # serves a stdio MCP server over Streamable HTTP (for hosted stdio images)
 dashboard/         # React/Vite admin + member UI (Tailwind + shadcn/ui), served by nginx
 e2e/               # Playwright: browser tests against the real gateway + dashboard build, and live storefront checkout
 system/            # the definition-of-done suite: one scripted scenario against the live cluster
@@ -471,6 +477,9 @@ TEST_DATABASE_URL=postgres://gateway_test:gateway_test@localhost:5433/gateway_te
 ./scripts/verify-phase5.sh   # chat agent, live against the default provider (Groq, else Gemini; reads GROQ_API_KEY / GEMINI_API_KEY or ~/.config/urumi/*.env); then re-runs phases 2-4
 ./scripts/verify-phase6.sh   # registers GitHub + DeepWiki, runs the definition-of-done suite (real chat model, GitHub, DeepWiki), then re-runs phases 2-5
 ./scripts/verify-phase7.sh   # the same suite plus its tool-permissions step, live permission/audit checks, then re-runs phases 2-5
+./scripts/verify-phase10.sh  # multi-store: create two stores, use both, prove they are isolated, delete them (a few minutes: WooCommerce is downloaded per store)
+./scripts/verify-hosted.sh   # hosted MCP servers: deploy a stdio and an HTTP image, probe the network, delete them
+./scripts/verify-oauth.sh    # OAuth: discovery, registration, PKCE, scopes, refresh rotation, revoke (curl, no browser)
 ```
 
 The test suites create users, products and orders that stay in the local
@@ -499,6 +508,69 @@ contexts for the admin/member flow).
 Without `TEST_DATABASE_URL` the gateway's Postgres-backed tests are skipped
 (with a warning); CI always runs them against a Postgres service container.
 
+## Stores, hosted MCP servers and OAuth
+
+Three features that build on the gateway. Each has a live verify script that
+builds, deploys to k3d and checks the claims below; `SKIP_DEPLOY=1` reuses what
+is already running. Design and threats: [system design](docs/SYSTEM_DESIGN.md)
+sections 10-12 and the [threat model](docs/THREAT_MODEL.md) sections 7-9.
+
+### Multi-store provisioning
+
+Any member can create a store from the **Stores** page (at most `stores.maxPerUser`,
+default 2, each). A **provisioner** pod (same image as the gateway, its own
+ServiceAccount) builds it through the Kubernetes API: a `store-<slug>` namespace
+with a quota, default-deny NetworkPolicies, MySQL, WordPress, the bootstrap Job and
+a WooCommerce MCP server, then registers that server so its tools appear as
+`<slug>__list_orders` beside every other tool. Deleting a store removes the
+namespace (and with it the volumes), the credential and the tools.
+
+- The page shows progress step by step; a store that gets stuck is marked failed
+  with the step and reason (default deadline 15 minutes) and its owner can retry.
+- Stores are reached at `<slug>.store.local.test`. `/etc/hosts` has no wildcards,
+  so add a line per store (the verify script prints them), or run dnsmasq.
+- The provisioner is the only thing with a cluster-wide Role, and it refuses to
+  touch a namespace it did not label itself. Crash recovery needs no state: every
+  step is idempotent and re-runs from the top.
+- The original store stays as the read-only "default" store.
+
+### Hosted MCP servers
+
+An admin can deploy an MCP server from an image on the **Servers** page ("By
+image"). An HTTP image is used as it is; a stdio image gets the `mcp-bridge`
+binary copied in by an init container, which serves it over Streamable HTTP. Each
+server runs in its own `mcp-<slug>` namespace: non-root, read-only filesystem, no
+ServiceAccount token, default-deny networking (egress is "none" or "internet" with
+private ranges excluded, chosen per server), and only the gateway can reach it.
+
+- Images must match `hosted.imageAllowlist` and be pinned: `:latest` and untagged
+  references are refused, and refusals are audited.
+- Secret environment variables go to a Kubernetes Secret, never to Postgres or the API.
+- Docker Hub's `mcp/*` images only publish `:latest`, so pin them by digest.
+- A server that cannot start says why (`ImagePullBackOff`, `CrashLoopBackOff`...).
+
+### OAuth for MCP clients
+
+With `gateway.oauth.enabled` the gateway is its own OAuth 2.1 authorization
+server, so Claude Code, MCP Inspector and claude.ai connect without an API key:
+discovery from the 401 on `/mcp` (RFC 9728, 8414), dynamic client registration
+(RFC 7591), authorization code with PKCE S256 only, resource indicators (RFC
+8707), refresh token rotation and revocation (RFC 7009). The user approves on the
+dashboard's consent page and can disconnect an app under **API keys**, which ends
+its access on the next request.
+
+- Scopes `mcp:read` and `mcp:write` only narrow what the user can already do (admins
+  included): a read-only grant never sees or runs a write tool. Writes still wait
+  for the user's approval.
+- Tokens are opaque and stored as SHA-256 hashes. Reusing a refresh token or an
+  authorization code revokes the whole grant.
+- **Claude Code** only sends tokens over https or to localhost. Locally, point the
+  issuer at a port-forward (the comments in `helm/values-local.yaml` show how).
+- **claude.ai** needs a public https URL: run `ngrok http` (or cloudflared) at the
+  gateway, set `gateway.oauth.publicBaseUrl` to the tunnel URL, and add
+  `<tunnel>/mcp` as a custom connector. Close the tunnel and reset the value when done.
+- Checked live with Claude Code, MCP Inspector 2.10 and claude.ai.
+
 ## Upgrades and rollback
 
 ```bash
@@ -526,12 +598,24 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
 | Production-like VPS deployment | Values documented, **not deployed** | `helm/values-prod.yaml` (placeholders), `docs/SYSTEM_DESIGN.md` §8 |
 | Scaling (multi-replica, rate limits) | Partial: stateless API, `gateway.replicas` works; rate limits are per pod | README "Known limitations" |
-| OAuth on the gateway | Not attempted | |
-| Hosted MCP servers | Not attempted | |
-| Multi-store provisioning (bonus) | Not attempted | |
+| OAuth on the gateway (Claude Code, MCP Inspector, claude.ai) | Done | `gateway/src/oauth/`, `gateway/src/db/oauth.ts`, `dashboard/src/pages/OAuthConsentPage.tsx`, `scripts/verify-oauth.sh`; README "Stores, hosted MCP servers and OAuth" |
+| Hosted MCP servers (deploy an image; stdio through a bridge) | Done | `gateway/src/provisioner/hostedReconciler.ts`, `gateway/src/provisioner/manifests/hosted.ts`, `mcp-bridge/`, `scripts/verify-hosted.sh` |
+| Multi-store provisioning (bonus) | Done | `gateway/src/provisioner/`, `gateway/src/api/stores.ts`, Stores page, `scripts/verify-phase10.sh`; `docs/SYSTEM_DESIGN.md` §10 |
 
 ## Known limitations
 
+- **Stores and hosted servers.** Provisioning a store takes a few minutes (it
+  downloads WooCommerce) and two or three at once strain a laptop, hence the
+  per-user cap and tight quotas. Local DNS needs a hosts line per store. Hosted
+  stdio images are served by a glibc or musl build of the bridge (the admin picks
+  one). Hosted images are untrusted code: the allowlist, Pod Security, no
+  ServiceAccount token and default-deny networking contain them, but a hosted
+  server with internet egress can still reach any public host.
+- **OAuth.** Public clients only (no client secrets), one resource (`/mcp`), two
+  scopes. Registration is open but rate limited (20 per IP per hour), so any
+  client can register; only the user's click on the consent page grants anything.
+  `TRUST_PROXY_HOPS` (default 1) must match the proxies in front of the gateway, or every client shares one rate-limit bucket.
+  Client ID Metadata Documents are not supported, only dynamic registration.
 - **No outgoing email.** The WordPress container has no mail server, so
   WooCommerce's order emails ("New order", "Processing order") fail and
   leave a note on each order: _"Email ... failed to send: Could not
