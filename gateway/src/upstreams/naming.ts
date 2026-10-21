@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { sanitizeTool } from "../security/untrusted.js";
 
 /**
  * Collision scheme: every aggregated tool is exposed as `<slug>__<tool>`.
@@ -56,6 +57,8 @@ export interface Route {
   upstreamName: string;
   /** The upstream's `readOnlyHint`, used by the member read-only default. */
   readOnly: boolean;
+  /** Why the upstream's description looked like it targets the model (see security/untrusted.ts). */
+  flags: string[];
 }
 
 export interface ToolIndex {
@@ -73,7 +76,10 @@ export function buildToolIndex(upstreams: UpstreamTools[]): ToolIndex {
   const tools: Tool[] = [];
   const routes = new Map<string, Route>();
   for (const upstream of upstreams) {
-    for (const tool of upstream.tools) {
+    for (const raw of upstream.tools) {
+      // Descriptions are third-party text: cleaned, bounded and flagged before
+      // anyone (a client, the chat model, an approval prompt) reads them.
+      const { tool, flags } = sanitizeTool(raw);
       let name = exposedToolName(upstream.slug, tool.name);
       // Two upstream names that sanitise to the same string (e.g. "a.b" and
       // "a_b"): the second one gets the hashed form instead.
@@ -84,6 +90,7 @@ export function buildToolIndex(upstreams: UpstreamTools[]): ToolIndex {
         slug: upstream.slug,
         upstreamName: tool.name,
         readOnly: tool.annotations?.readOnlyHint === true,
+        flags,
       });
       tools.push({
         ...tool,

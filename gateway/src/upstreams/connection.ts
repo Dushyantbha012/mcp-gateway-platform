@@ -9,6 +9,7 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { cleanResultText } from "../security/untrusted.js";
 import { createGuardedFetch, SsrfError, type SsrfPolicy } from "../security/ssrf.js";
 
 export interface UpstreamConfig {
@@ -156,7 +157,7 @@ export class UpstreamConnection {
         ],
       };
     }
-    return result as CallToolResult;
+    return stripHiddenFromResult(result as CallToolResult);
   }
 
   async close(): Promise<void> {
@@ -217,4 +218,15 @@ export class UpstreamConnection {
     }
     return this.client;
   }
+}
+
+/** Removes invisible characters from text parts; everything else passes through untouched. */
+function stripHiddenFromResult(result: CallToolResult): CallToolResult {
+  if (!Array.isArray(result.content)) return result;
+  return {
+    ...result,
+    content: result.content.map((c) =>
+      c.type === "text" ? { ...c, text: cleanResultText(c.text) } : c,
+    ),
+  };
 }
