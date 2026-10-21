@@ -52,6 +52,14 @@ gateway:
       # This repo's own images (imported into k3d), e.g. woocommerce-mcp as an
       # http server in scripts/verify-hosted.sh.
       - docker.io/mcp-gateway/
+  # OAuth for MCP clients, signing in through the dashboard (scripts/verify-oauth.sh).
+  # Claude Code only sends tokens over https or to localhost, so for it point the
+  # issuer at a port-forward:
+  #   helm upgrade ... --set gateway.oauth.publicBaseUrl=http://localhost:3999
+  #   kubectl -n urumi port-forward svc/platform-gateway 3999:80
+  #   claude mcp add --transport http urumi http://localhost:3999/mcp
+  oauth:
+    enabled: true
 
 dashboard:
   ingress:

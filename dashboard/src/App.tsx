@@ -15,6 +15,7 @@ import { AuditPage } from "@/pages/AuditPage";
 import { InvitePage } from "@/pages/InvitePage";
 import { KeysPage } from "@/pages/KeysPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { OAuthConsentPage } from "@/pages/OAuthConsentPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { ServersPage } from "@/pages/ServersPage";
 import { StoresPage } from "@/pages/StoresPage";
@@ -86,6 +87,15 @@ export function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/invite/:token" element={<InvitePage />} />
+      {/* Logged in, but full-page like login: the user arrives here from an MCP client. */}
+      <Route
+        path="/oauth/consent"
+        element={
+          <RequireAuth>
+            <OAuthConsentPage />
+          </RequireAuth>
+        }
+      />
       <Route
         element={
           <RequireAuth>

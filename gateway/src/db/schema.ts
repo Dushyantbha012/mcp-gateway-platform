@@ -182,6 +182,56 @@ export interface WriteApprovalsTable {
   used_at: Date | null;
 }
 
+export interface OAuthClientsTable {
+  id: string;
+  name: string;
+  redirect_uris: string[];
+  created_at: CreatedAt;
+  last_used_at: Date | null;
+}
+
+export interface OAuthRequestsTable {
+  id: Generated<string>;
+  client_id: string;
+  redirect_uri: string;
+  state: string | null;
+  code_challenge: string;
+  scope: string[];
+  resource: string;
+  created_at: CreatedAt;
+  expires_at: Date;
+}
+
+export interface OAuthCodesTable {
+  hash: Buffer;
+  client_id: string;
+  user_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string[];
+  resource: string;
+  family_id: string;
+  created_at: CreatedAt;
+  expires_at: Date;
+  used_at: Date | null;
+}
+
+export interface OAuthTokensTable {
+  id: Generated<string>;
+  hash: Buffer;
+  kind: "access" | "refresh";
+  family_id: string;
+  client_id: string;
+  user_id: string;
+  scope: string[];
+  resource: string;
+  created_at: CreatedAt;
+  expires_at: Date;
+  used_at: Date | null;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+}
+
 export interface Database {
   users: UsersTable;
   api_keys: ApiKeysTable;
@@ -193,6 +243,10 @@ export interface Database {
   write_approvals: WriteApprovalsTable;
   stores: StoresTable;
   hosted_servers: HostedServersTable;
+  oauth_clients: OAuthClientsTable;
+  oauth_requests: OAuthRequestsTable;
+  oauth_codes: OAuthCodesTable;
+  oauth_tokens: OAuthTokensTable;
 }
 
 export type User = Selectable<UsersTable>;
@@ -212,3 +266,5 @@ export type StoreUpdate = Updateable<StoresTable>;
 export type HostedServer = Selectable<HostedServersTable>;
 export type NewHostedServer = Insertable<HostedServersTable>;
 export type HostedServerUpdate = Updateable<HostedServersTable>;
+export type OAuthClient = Selectable<OAuthClientsTable>;
+export type OAuthRequest = Selectable<OAuthRequestsTable>;

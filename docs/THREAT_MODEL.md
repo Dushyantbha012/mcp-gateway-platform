@@ -83,7 +83,7 @@ model after a call). It can also be slow, huge, or lie about its tools.
 | Escalate to admin | Roles change only through the admin-only API; the last admin cannot be demoted or disabled, nobody can change their own role |
 | Use a tool they were denied | Hidden from `tools/list` and chat, and refused on a direct call (audited `denied`) |
 | Cause another member's calls to fail | Per-user rate limits (chat turns, login failures) are keyed by user/IP/email; a shared upstream's own limits are shared, which is an accepted residual risk |
-| CSRF from another website | Session cookie is SameSite=Strict, scoped to `/api`; every cookie-authenticated change must carry an allowed `Origin` (fails closed); `/mcp` accepts API keys only |
+| CSRF from another website | Session cookie is SameSite=Strict, scoped to `/api`; every cookie-authenticated change must carry an allowed `Origin` (fails closed); `/mcp` takes bearer tokens (API keys or OAuth access tokens), never cookies |
 
 ## 5. Other controls
 
@@ -99,6 +99,57 @@ model after a call). It can also be slow, huge, or lie about its tools.
 - **Audit:** every tool call and every gateway-level `search_tools` call, awaited
   before the reply, with request IDs for correlation.
 
+## 7. Provisioned stores and the provisioner
+
+New actor: **any member** can now cause namespaces to be created, and a new
+component, the provisioner, holds a ClusterRole to do it.
+
+| Threat | Control |
+|---|---|
+| The provisioner's ClusterRole is a high-value target (it creates namespaces and Secrets cluster-wide) | It is a separate pod with its own ServiceAccount; the gateway, which faces users and MCP clients, keeps its namespace-scoped Role. The provisioner has no ingress at all, and egress only to Postgres and the API server. It refuses any namespace that lacks the label it put there itself (`urumi.ai/managed-by=provisioner`), so a bad row cannot make it delete `kube-system` or `urumi`. Its verbs are listed in `helm/charts/gateway/templates/provisioner.yaml`: `delete` only on namespaces, Secrets, Jobs and NetworkPolicies |
+| A member creates stores until the cluster is full | At most 2 per user, checked in a transaction under a row lock; a ResourceQuota per namespace; a deadline that fails a stuck store. Admins can delete any store |
+| One store reads another's data | Namespace per store, default-deny NetworkPolicies both ways, allow rules only within the namespace plus the gateway's pods to the MCP server; proven by `verify-phase10.sh` |
+| A member edits a store's server row to point it elsewhere | Managed rows (`managed_by`) cannot be edited or deleted through the servers API (409); the SSRF guard accepts only the exact in-cluster address the row implies |
+| A store name collides with, or steals, an existing server's tool names | The slug must be unique across stores and servers, and tools are namespaced by slug |
+| Deleting a store leaves data or credentials behind | Row, credential and tools go first, then the namespace; volumes go with it; the `stores` row is removed only after the namespace is gone |
+| Passwords of a store survive a reconcile or leak | Generated once, only if absent; stored in Secrets in the store's namespace, never in Postgres |
+
+## 8. Hosted MCP servers (untrusted code)
+
+An admin deploys an image; the image is **untrusted code** that will run inside
+the cluster, handle the credentials it is given, and answer tool calls that reach
+an LLM.
+
+| Threat | Control |
+|---|---|
+| A malicious or typo-squatted image | Registry allowlist (`hosted.imageAllowlist`) and pinned references: `:latest` and untagged images are refused, and refusals are audited. Only admins can deploy |
+| The container attacks the node or the cluster | Pod Security `restricted` (non-root, read-only root filesystem, all capabilities dropped, seccomp), no ServiceAccount token, a ResourceQuota, its own namespace |
+| It reaches internal services (Postgres, stores, the Kubernetes API, the metadata endpoint) | Default-deny NetworkPolicies. Ingress only from the gateway's pods. Egress DNS only, or public internet minus the cluster, pod and service ranges and `169.254.169.254`. `verify-hosted.sh` probes each target from inside the pod |
+| It exfiltrates the secrets it was given | Not prevented for a server with internet egress: it can send its own environment anywhere public. Mitigated by choosing `egress: none` where the server does not need the internet, giving it only the credentials it needs, and rotating them |
+| Its tool descriptions and results try to steer the model | Same as any upstream (section 3): bounded by the user's permissions, approval for writes, audit |
+| Secret environment values leak through the API, Postgres or logs | They go straight to a Kubernetes Secret; Postgres and API responses hold names only; the verify script searches Postgres and the audit log for the value |
+| The stdio bridge is an open door | It requires a bearer token (generated per server) and is reachable only from the gateway's pods |
+
+## 9. OAuth for MCP clients
+
+New actors: **MCP clients that registered themselves** (anyone can register) and
+**the redirect target** a client names.
+
+| Threat | Control |
+|---|---|
+| A malicious site registers as a trusted-looking app and phishes consent | Registration is open by design (RFC 7591) but grants nothing: the user must approve on the consent page, which shows the app's name, the account it will act as, where the browser is sent next (and says when that is an app on this computer), and what it wants. Redirect URIs must be https or loopback. Residual risk: the app name is self-declared, so the page tells users to approve only apps they started connecting |
+| Redirect hijack: a code sent to the attacker | Exact redirect URI match against the registered URIs (loopback port may vary, RFC 8252); an unknown client or unmatched URI gets a plain error page, never a redirect |
+| Code interception | PKCE S256 is mandatory (`plain` is refused); the code is single use, expires in 10 minutes, and is bound to client and redirect URI; reuse revokes what it issued |
+| Refresh token theft | Tokens rotate on every use; reusing a rotated token revokes the whole grant, so a thief and the real client cannot both keep going; refresh tokens are bound to their client; stored only as hashes |
+| Token audience confusion (a token for another service used here, or the reverse) | Every token carries its resource (RFC 8707); `/mcp` rejects another audience; the gateway never forwards a client token to an upstream (section 2) |
+| An OAuth token does more than the user could | Scopes only narrow: `mcp:read` hides and refuses write tools even for admins, and the role's own permissions still apply on top. Held writes still need the user's approval |
+| A token approves something itself | `/api/oauth/*` accepts dashboard sessions only (no API keys, no OAuth tokens) and enforces the Origin check, so a client cannot approve its own request |
+| Cross-site request approving a consent | The consent decision is a session POST that must carry an allowed Origin; the request id is a random UUID, single use |
+| Token endpoint brute force or registration flooding | 30 failures per IP per 15 minutes on `/oauth/token`; 20 registrations per IP per hour; both in memory per pod (as in section 6). The client IP comes from `TRUST_PROXY_HOPS` |
+| A leaked access token | Lifetime 1 hour; the user can disconnect the app (Connected apps) and the next request fails; revocation by token (RFC 7009) works for the client too |
+| Open CORS on the OAuth and `/mcp` endpoints | Needed by browser clients such as MCP Inspector. They carry no cookies (`ACAO *` without credentials); every route needs a bearer token or is a public discovery document |
+| Audit gaps | Approve, deny and disconnect are audit rows; tool calls are attributed to the user, with no API key |
+
 ## 6. Residual risks (honest list)
 
 - **Prompt injection is not solved** (section 3). Mitigations bound the damage.
@@ -111,10 +162,18 @@ model after a call). It can also be slow, huge, or lie about its tools.
   the cluster may scrape it.
 - **Egress is filtered by IP range, not hostname** (needs an FQDN-aware CNI), so a
   compromised gateway can still reach arbitrary public hosts.
-- **Admin actions are not audited** (the brief asks for tool calls). A rogue admin
-  can change rules; the tool calls they make are still logged.
+- **Most admin actions are not audited** (the brief asks for tool calls). A rogue admin
+  can change rules; the tool calls they make are still logged. Store, hosted-server
+  and OAuth actions are the exception: they are audit rows.
 - **Credentials rotate on other replicas within about 5 s** (short cache).
-- **No image scanning or digest pinning;** the Groq and Gemini API keys and the WooCommerce
+- **No image scanning;** hosted images are pinned but not scanned, and the chart's own images are not digest-pinned; the Groq and Gemini API keys and the WooCommerce
   bearer token are Secrets in the same cluster as the workloads that use them.
+- **A hosted server with internet egress can exfiltrate whatever it was given**
+  (section 8), and a provisioned store's MCP server is trusted code from this repo.
+- **OAuth app names are self-declared.** The consent page shows where the browser
+  goes next, but a user who approves an app they did not start gives it their
+  access (read-only unless they allow writes, and writes still need approval).
+- **Open registration** means anyone who can reach the gateway can create client
+  records; they are rate limited per pod and hold no access until approved.
 - **Local test setup uses plain HTTP**; production values turn on TLS and the
   `Secure` cookie flag, but this has not yet been exercised on a real VPS.

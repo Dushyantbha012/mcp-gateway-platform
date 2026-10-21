@@ -30,7 +30,7 @@ one code path for routing, permissions, timeouts and auditing.
 ## 2. A tool call, end to end
 
 1. The client sends `tools/call` to `/mcp` with `Authorization: Bearer <api key>`
-   (`gateway/src/mcp/endpoint.ts`). The key is hashed (SHA-256) and looked up on
+   (or an OAuth access token, section 12) (`gateway/src/mcp/endpoint.ts`). The key is hashed (SHA-256) and looked up on
    **every** request, so a revoked key or disabled user fails on its next call.
 2. `ToolRouter` (`gateway/src/upstreams/router.ts`) maps the exposed name to
    `{server, upstream tool}` using a map built from each enabled server's cached
@@ -148,6 +148,144 @@ charts have not yet been deployed to a real VPS.
 
 ## 9. Not done, on purpose
 
-OAuth on the gateway, hosted MCP servers, multi-store provisioning, per-pod-shared
-rate limiting, hostname-based egress filtering (needs an FQDN-aware CNI). See the
-README's "Bonus items" table and the threat model's residual risks.
+Per-pod-shared rate limiting and hostname-based egress filtering (needs an
+FQDN-aware CNI). See the README's "Bonus items" table and the threat model's
+residual risks.
+
+## 10. Multi-store provisioning
+
+```
+ member ─► POST /api/stores ─► Postgres (stores row, status=provisioning) ─NOTIFY─┐
+                                                                                  ▼
+                            provisioner pod (advisory lock, 5s tick + LISTEN) ─► Kubernetes API
+                              ensureSecrets → apply → MySQL → WordPress →         (server-side apply)
+                              bootstrap Job → MCP server → register
+                                                                                  ▼
+          gateway ◄── mcp_servers row (managed_by=store) + credential ◄── namespace store-<slug>
+```
+
+The gateway never gets cluster-wide rights. Creating a store is a database row;
+a separate **provisioner** (same image, its own ServiceAccount and ClusterRole)
+turns rows into Kubernetes objects. Manifests are typed TypeScript builders
+(`gateway/src/provisioner/manifests/store.ts`) that mirror the store Helm chart;
+a parity test compares them with `helm template`, and invariant tests check every
+container is non-root with limits and every pod is covered by a NetworkPolicy.
+
+- **A reconciler, not a script.** Each step is idempotent and recorded in
+  `stores.step`. After a crash the loop starts every unfinished row from step one
+  and each completed step is a no-op, so there is no in-memory state. Generated
+  secrets are created only if absent, because the MySQL volume keeps its first
+  password. A store past `deadline_at` becomes `failed` with the step and the last
+  observed condition; the owner can retry. One replica holds a Postgres advisory
+  lock; a second one waits.
+- **Isolation.** One namespace per store with Pod Security `restricted`, a
+  ResourceQuota and LimitRange, default-deny NetworkPolicies in both directions, and
+  allow rules only inside the namespace plus "the gateway's pods may reach the MCP
+  server". `verify-phase10.sh` proves a pod in one store cannot reach another's
+  MySQL or WordPress.
+- **Registration.** The store's MCP server becomes an `mcp_servers` row with
+  `managed_by=store`, so the servers API refuses to edit or delete it and the
+  gateway's SSRF guard accepts exactly the in-cluster address the row implies.
+  Its tools are `<slug>__<tool>` like any other.
+- **Delete.** Row, credential and tools first, then the namespace (volumes go with
+  it, `local-path` reclaims with Delete), then the `stores` row once the namespace
+  is gone. The provisioner refuses any namespace without its own label.
+- **Limits.** Any user, at most 2 stores each, checked in a transaction holding a
+  lock on the user row; creating the same name twice returns the first store.
+
+| Decision | Why | Cost |
+|---|---|---|
+| A provisioner pod instead of giving the gateway cluster rights | The part that faces users and MCP clients cannot create namespaces; the blast radius of a gateway bug is unchanged | One more Deployment and a ClusterRole to review |
+| Server-side apply from typed builders, not Helm in a Job | No Helm binary or chart in the image, the state machine can see each object, tests are plain unit tests | The builders must be kept in line with the chart (the parity test does that) |
+| Tight quotas and 1Gi volumes | Several stores fit on a laptop | A busy store would hit its quota |
+
+## 11. Hosted MCP servers
+
+An admin gives an image; the provisioner runs it. The same reconciler framework
+as stores, with a different spec (`hostedReconciler.ts`, `manifests/hosted.ts`):
+secret, apply, wait for the Deployment, register.
+
+- **HTTP images** run as they are, with a generated bearer token the gateway
+  attaches. **stdio images** get the `mcp-bridge` binary through an init container
+  and an `emptyDir`; the bridge starts the admin's command as a child process and
+  serves it as stateless Streamable HTTP, requiring the same bearer token.
+- **Untrusted code.** Each server is in its own `mcp-<slug>` namespace with Pod
+  Security `restricted`, non-root, read-only root filesystem, no capabilities, no
+  ServiceAccount token, a small quota, and default-deny NetworkPolicies. Ingress is
+  the gateway's pods only. Egress is DNS only, or, if the admin chose "internet",
+  the public internet minus the cluster, pod and service ranges and the metadata
+  address. `verify-hosted.sh` probes every one of those edges.
+- **Supply chain.** The image must start with a prefix in `hosted.imageAllowlist`
+  and be pinned (a tag other than `latest`, or a digest). Refusals are audited.
+- **Secrets.** Secret environment values go from the admin API to a Secret in
+  `urumi-upstreams` and are copied into the server's namespace by the provisioner;
+  Postgres stores only the variable names.
+- **Failure reporting.** If the Deployment never becomes ready, the reason is the
+  pod's waiting reason (`ErrImagePull`, `CrashLoopBackOff`), shown on the Servers page.
+
+## 12. OAuth for MCP clients
+
+The gateway is its own authorization server (`gateway/src/oauth/`), so there is no
+external identity provider to run and the consent page is the dashboard the user
+already logs in to.
+
+```
+ MCP client                    gateway                               dashboard (browser)
+     │  POST /mcp (no token)       │                                          │
+     ├────────────────────────────►│ 401 WWW-Authenticate: Bearer resource_metadata=…
+     │  GET /.well-known/oauth-protected-resource/mcp  → {resource, authorization_servers}
+     │  GET /.well-known/oauth-authorization-server    → endpoints, S256, public clients
+     │  POST /oauth/register       │ → client_id (mgc_…)                      │
+     │  open browser: GET /oauth/authorize?client_id&redirect_uri&code_challenge&resource&scope
+     │                             │ park request, 302 ───────────────────────►│ /oauth/consent?req=…
+     │                             │                                          │ login if needed; user ticks
+     │                             │◄─ POST /api/oauth/requests/:id {approve, scopes}  (session + Origin)
+     │◄── 302 redirect_uri?code&state&iss  ◄──────────────────────────────────┤
+     │  POST /oauth/token (code, code_verifier, resource)                      │
+     │                             │ burn code, check PKCE, client, redirect, resource
+     │◄── access mgo_… (1h) + refresh mgr_… (30d)
+     │  POST /mcp  Authorization: Bearer mgo_…  → tools filtered by scope and by role
+     │  POST /oauth/token (refresh_token) → new pair; the old refresh token is spent
+```
+
+- **What a token is.** Opaque random strings (`mgc_` client id, `mgo_` access,
+  `mgr_` refresh), stored only as SHA-256 hashes, looked up on every request like API
+  keys, so revoking a grant or disabling the user works on the next call. Each is
+  bound to one client, one user and one resource (RFC 8707): `/mcp` rejects a token
+  issued for another audience.
+- **Standards, and what is strict.** PKCE S256 is mandatory and `plain` is refused.
+  Public clients only (`token_endpoint_auth_method: none`). Redirect URIs must be https
+  or loopback (RFC 8252), matched exactly except the loopback port. Errors after the
+  client and redirect URI check out go back to the client with `state` and `iss`
+  (RFC 9207); before that they are a plain 400 page, never a redirect.
+- **Codes and refresh tokens.** A code is single use and burned on any attempt,
+  including a wrong verifier. Reusing a code, or a refresh token that was already
+  rotated, revokes everything the grant issued (`family_id`). Refresh tokens are bound
+  to their client. A refresh may ask for less than was granted; the access token is
+  narrowed and the grant is not.
+- **Scopes only narrow.** `mcp:read` allows tools marked read-only, `mcp:write` the
+  rest. They apply to admins too, are checked before the role permissions, hide the
+  tools from `tools/list` and refuse a direct call (audited `denied`). A grant
+  never gives more than the user's role. Held writes still wait for the user's approval.
+- **Consent is a session action.** Only the logged-in person at the browser can
+  approve: `/api/oauth/*` takes dashboard sessions, not API keys or OAuth tokens,
+  and the Origin check applies. "Connected apps" lists and ends grants.
+- **Audit.** Approve, deny and disconnect are audit rows; tool calls through a token
+  are audited as the user, with no API key.
+- **Issuer.** `PUBLIC_BASE_URL` (default the Ingress URL) is the issuer and its `/mcp`
+  is the resource, so a tunnel moves both. The consent page is `DASHBOARD_URL`.
+
+| Decision | Why | Cost |
+|---|---|---|
+| The gateway as authorization server | MCP clients need dynamic registration and discovery; no extra service, and the user's existing login and audit log are reused | The gateway now handles sign-in endpoints that need their own rate limits and tests |
+| Opaque, hashed tokens | Instant revocation, nothing to forge, same model as API keys | One database lookup per request |
+| Public clients and PKCE only | What Claude Code, Inspector and claude.ai are; no secrets to leak | No confidential-client flows |
+
+## 13. Local to production notes for the three features
+
+- Stores need wildcard DNS for `*.store.<domain>` (a real wildcard A record in
+  production); locally one hosts line per store.
+- OAuth needs https in production, which `ingress.tls` and `publicBaseUrl` give;
+  `gateway.oauth.publicBaseUrl` is also how a tunnel is used for claude.ai.
+- The provisioner's NetworkPolicy allows Postgres and the API server only; set
+  `global.networkPolicy.apiServerCidr` as for the gateway.

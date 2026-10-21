@@ -1,6 +1,6 @@
 import { createApp } from "../app.js";
 import type { ChatSetup } from "../api/chat.js";
-import type { AuthConfig } from "../config.js";
+import type { AuthConfig, OAuthConfig } from "../config.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
 import { hashPassword } from "../crypto/passwords.js";
 import { MemoryHostedEnvStore } from "../credentials/hostedEnv.js";
@@ -27,6 +27,15 @@ export const testAuthConfig: AuthConfig = {
   inviteTtlMs: 3_600_000,
 };
 
+export const testOAuthConfig: OAuthConfig = {
+  issuer: "http://gateway.test",
+  resource: "http://gateway.test/mcp",
+  consentUrl: `${TEST_ORIGIN}/oauth/consent`,
+  accessTtlMs: 3_600_000,
+  refreshTtlMs: 30 * 86_400_000,
+  codeTtlMs: 600_000,
+};
+
 /** The gateway app wired exactly as index.ts does, with short test timeouts. */
 export function buildTestApp(
   db: Db,
@@ -41,6 +50,8 @@ export function buildTestApp(
     holdMcpWrites?: boolean;
     stores?: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
     hosted?: { enabled: boolean; imageAllowlist: string[]; timeoutSeconds: number };
+    /** Turn on the OAuth authorization server (testOAuthConfig is a ready one). */
+    oauth?: OAuthConfig;
   } = {},
 ) {
   const credentials = new MemoryCredentialStore();
@@ -58,6 +69,7 @@ export function buildTestApp(
       imageAllowlist: ["docker.io/mcp/", "ghcr.io/acme/server"],
       timeoutSeconds: 600,
     },
+    oauth: opts.oauth,
   };
   const hostedEnv = new MemoryHostedEnvStore();
   const deps = {

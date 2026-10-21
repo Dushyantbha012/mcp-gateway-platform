@@ -18,6 +18,9 @@ import type { CredentialStore } from "./credentials/store.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
 import type { GatewayMetrics } from "./metrics/metrics.js";
+import { oauthConsentApi } from "./oauth/consent.js";
+import { publicCors } from "./oauth/cors.js";
+import { oauthMetadata, oauthServer } from "./oauth/server.js";
 import { requestId } from "./requestContext.js";
 import { ToolSurface } from "./search/surface.js";
 import type { SsrfPolicy } from "./security/ssrf.js";
@@ -33,7 +36,8 @@ export interface AppDeps {
   router: ToolRouter;
   /** Which upstream URLs may be registered (SSRF guard). */
   ssrf: SsrfPolicy;
-  config: Pick<Config, "auth" | "trustProxyHops"> & Partial<Pick<Config, "stores" | "hosted">>;
+  config: Pick<Config, "auth" | "trustProxyHops"> &
+    Partial<Pick<Config, "stores" | "hosted" | "oauth">>;
   /** Secret env values of hosted servers; default: in memory (tests). */
   hostedEnv?: HostedEnvStore;
   /** The chat agent's model and limits; absent = chat switched off (503). */
@@ -80,11 +84,29 @@ export function createApp(deps: AppDeps) {
     });
   }
 
-  // MCP clients authenticate with API keys only. The session cookie is
-  // scoped to /api, and isn't accepted here even if sent.
+  // OAuth: the gateway is the authorization server for its own /mcp. The
+  // endpoints a browser-based client calls directly get CORS; /authorize is
+  // a page navigation and the consent API is the dashboard's, so neither does.
+  const { oauth } = deps.config;
+  if (oauth) {
+    app.use("/.well-known", publicCors);
+    app.use(oauthMetadata(oauth));
+    app.use(["/oauth/register", "/oauth/token", "/oauth/revoke", "/mcp"], publicCors);
+    app.use("/oauth", oauthServer(deps.db, oauth));
+  }
+
+  // MCP clients authenticate with API keys, or OAuth access tokens when OAuth
+  // is on. The session cookie is scoped to /api, and isn't accepted here even if sent.
   app.use(
     "/mcp",
-    requireAuth(deps.db, { style: "jsonrpc", allowSession: false }),
+    requireAuth(deps.db, {
+      style: "jsonrpc",
+      allowSession: false,
+      oauth: oauth && {
+        resource: oauth.resource,
+        resourceMetadataUrl: `${oauth.issuer}/.well-known/oauth-protected-resource/mcp`,
+      },
+    }),
     mcpRouter(tools),
   );
 
@@ -112,8 +134,11 @@ export function createApp(deps: AppDeps) {
       chatProviders: (deps.chat?.providers ?? []).map((p) => ({ id: p.id, model: p.model })),
       chatProvider: deps.chat?.defaultProvider ?? null,
       searchMode: tools.mode,
+      // MCP clients can sign in with OAuth instead of pasting an API key.
+      oauthEnabled: oauth !== undefined,
     });
   });
+  if (oauth) api.use("/oauth", oauthConsentApi(deps.db, oauth));
   api.use("/servers", serversApi(deps));
   api.use(
     "/stores",

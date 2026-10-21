@@ -43,6 +43,9 @@ gateway:
       woocommerceMcp:
         image: ghcr.io/CHANGE_ME/woocommerce-mcp:0.2.0
         imagePullPolicy: IfNotPresent
+  # OAuth for MCP clients, including claude.ai custom connectors.
+  oauth:
+    enabled: true
 
 dashboard:
   ingress:

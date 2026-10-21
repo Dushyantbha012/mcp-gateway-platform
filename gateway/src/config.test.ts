@@ -242,4 +242,65 @@ describe("loadConfig", () => {
       /needs BOOTSTRAP_ADMIN_EMAIL/,
     );
   });
+
+  describe("oauth", () => {
+    const on = { ...base, OAUTH_ENABLED: "true", DASHBOARD_URL: "https://dash.example.com/" };
+
+    it("is off by default", () => {
+      expect(loadConfig(base).oauth).toBeUndefined();
+    });
+
+    it("takes the issuer from PUBLIC_BASE_URL; the resource is its /mcp", () => {
+      expect(loadConfig({ ...on, PUBLIC_BASE_URL: "https://gw.example.com/" }).oauth).toEqual({
+        issuer: "https://gw.example.com",
+        resource: "https://gw.example.com/mcp",
+        consentUrl: "https://dash.example.com/oauth/consent",
+        accessTtlMs: 3_600_000,
+        refreshTtlMs: 30 * 86_400_000,
+        codeTtlMs: 600_000,
+      });
+    });
+
+    it("an explicit PUBLIC_BASE_URL (a tunnel) moves the resource too", () => {
+      expect(
+        loadConfig({
+          ...on,
+          PUBLIC_MCP_URL: "http://gateway.local.test/mcp",
+          PUBLIC_BASE_URL: "https://abc.ngrok.app",
+        }).oauth,
+      ).toMatchObject({ issuer: "https://abc.ngrok.app", resource: "https://abc.ngrok.app/mcp" });
+    });
+
+    it("falls back to PUBLIC_MCP_URL's origin, and reads the lifetimes", () => {
+      const oauth = loadConfig({
+        ...on,
+        PUBLIC_MCP_URL: "http://gateway.local.test/mcp",
+        OAUTH_ACCESS_TTL_MINUTES: "15",
+        OAUTH_REFRESH_TTL_DAYS: "7",
+      }).oauth;
+      expect(oauth).toMatchObject({
+        issuer: "http://gateway.local.test",
+        resource: "http://gateway.local.test/mcp",
+        accessTtlMs: 15 * 60_000,
+        refreshTtlMs: 7 * 86_400_000,
+      });
+    });
+
+    it("needs an issuer and the dashboard, and sane lifetimes", () => {
+      expect(() => loadConfig(on)).toThrow(/needs PUBLIC_BASE_URL/);
+      expect(() =>
+        loadConfig({ ...base, OAUTH_ENABLED: "true", PUBLIC_BASE_URL: "https://gw.example.com" }),
+      ).toThrow(/needs DASHBOARD_URL/);
+      expect(() => loadConfig({ ...on, PUBLIC_BASE_URL: "ftp://gw.example.com" })).toThrow(
+        /PUBLIC_BASE_URL/,
+      );
+      expect(() =>
+        loadConfig({
+          ...on,
+          PUBLIC_BASE_URL: "https://gw.example.com",
+          OAUTH_REFRESH_TTL_DAYS: "0",
+        }),
+      ).toThrow(/OAUTH_REFRESH_TTL_DAYS/);
+    });
+  });
 });

@@ -156,6 +156,19 @@ spec:
               value: {{ join "," .Values.hosted.imageAllowlist | quote }}
             - name: HOSTED_TIMEOUT_SECONDS
               value: {{ .Values.hosted.timeoutSeconds | quote }}
+            - name: OAUTH_ENABLED
+              value: {{ .Values.oauth.enabled | quote }}
+            {{- if .Values.oauth.enabled }}
+            {{- if not .Values.dashboardUrl }}
+            {{- fail "oauth.enabled needs dashboardUrl: the consent page is in the dashboard" }}
+            {{- end }}
+            - name: PUBLIC_BASE_URL
+              value: {{ .Values.oauth.publicBaseUrl | default (include "gateway.url" .) | quote }}
+            - name: OAUTH_ACCESS_TTL_MINUTES
+              value: {{ .Values.oauth.accessTtlMinutes | quote }}
+            - name: OAUTH_REFRESH_TTL_DAYS
+              value: {{ .Values.oauth.refreshTtlDays | quote }}
+            {{- end }}
             {{- if .Values.seedWoocommerce.enabled }}
             - name: SEED_WOOCOMMERCE_URL
               value: {{ include "gateway.woocommerceUrl" . | quote }}
@@ -229,7 +242,12 @@ spec:
         paths:
           # /mcp for MCP clients, /api for scripts and admin tooling (the
           # dashboard reaches /api through its own host), /healthz for uptime checks.
-          {{- range list "/mcp" "/api" "/healthz" }}
+          # With OAuth: the discovery documents and the authorization server.
+          {{- $paths := list "/mcp" "/api" "/healthz" }}
+          {{- if .Values.oauth.enabled }}
+          {{- $paths = concat $paths (list "/.well-known/oauth-protected-resource" "/.well-known/oauth-authorization-server" "/oauth/") }}
+          {{- end }}
+          {{- range $paths }}
           - path: {{ . }}
             pathType: Prefix
             backend:

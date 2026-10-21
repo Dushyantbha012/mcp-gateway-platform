@@ -232,6 +232,32 @@ export interface Meta {
   chatProvider?: string | null;
   /** How MCP clients get tools by default: all of them, or search_tools + call_tool. */
   searchMode?: "off" | "on" | "auto";
+  /** MCP clients can sign in with OAuth instead of an API key. */
+  oauthEnabled?: boolean;
+}
+
+export type OAuthScope = "mcp:read" | "mcp:write";
+
+/** An MCP client's sign-in request, waiting for the user on the consent page. */
+export interface OAuthRequest {
+  id: string;
+  clientId: string;
+  clientName: string;
+  redirectUri: string;
+  redirectHost: string;
+  scopes: OAuthScope[];
+  resource: string;
+  expiresAt: string;
+}
+
+/** An MCP client the user approved that can still get tokens. */
+export interface ConnectedApp {
+  id: string;
+  clientId: string;
+  clientName: string;
+  scopes: OAuthScope[];
+  createdAt: string;
+  lastUsedAt: string | null;
 }
 
 /** One message sent to the chat endpoint; history lives in the browser. */

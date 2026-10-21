@@ -84,6 +84,18 @@ const schema = z
     // PUBLIC_MCP_URL is shown to members as "point your MCP client here".
     DASHBOARD_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
     PUBLIC_MCP_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
+    // OAuth for MCP clients (the gateway is its own authorization server).
+    // PUBLIC_BASE_URL is the issuer, as clients reach the gateway; defaults to
+    // PUBLIC_MCP_URL's origin. The consent page is on DASHBOARD_URL.
+    OAUTH_ENABLED: envBoolean,
+    PUBLIC_BASE_URL: optionalString.pipe(z.url({ protocol: /^https?$/ }).optional()),
+    OAUTH_ACCESS_TTL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .default(60),
+    OAUTH_REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     // Origins allowed to make cookie-authenticated changes (CSRF defence).
     // Defaults to DASHBOARD_URL's origin.
     DASHBOARD_ORIGINS: commaList.pipe(z.array(z.url({ protocol: /^https?$/ }))),
@@ -153,6 +165,14 @@ const schema = z
     message: "BOOTSTRAP_ADMIN_PASSWORD needs BOOTSTRAP_ADMIN_EMAIL",
     path: ["BOOTSTRAP_ADMIN_PASSWORD"],
   })
+  .refine((e) => !e.OAUTH_ENABLED || !!(e.PUBLIC_BASE_URL || e.PUBLIC_MCP_URL), {
+    message: "OAUTH_ENABLED needs PUBLIC_BASE_URL (or PUBLIC_MCP_URL): it is the issuer",
+    path: ["PUBLIC_BASE_URL"],
+  })
+  .refine((e) => !e.OAUTH_ENABLED || !!e.DASHBOARD_URL, {
+    message: "OAUTH_ENABLED needs DASHBOARD_URL: the consent page is there",
+    path: ["DASHBOARD_URL"],
+  })
   .refine((e) => !!e.SEED_WOOCOMMERCE_URL === !!e.SEED_WOOCOMMERCE_TOKEN, {
     message: "set both SEED_WOOCOMMERCE_URL and SEED_WOOCOMMERCE_TOKEN, or neither",
     path: ["SEED_WOOCOMMERCE_TOKEN"],
@@ -167,6 +187,20 @@ export interface AuthConfig {
   cookieSecure: boolean;
   sessionTtlMs: number;
   inviteTtlMs: number;
+}
+
+/** The gateway as an OAuth authorization server for its own /mcp endpoint. */
+export interface OAuthConfig {
+  /** The issuer: the gateway's public base URL, no trailing slash. */
+  issuer: string;
+  /** The canonical URI of the protected resource (RFC 8707): the public /mcp URL. */
+  resource: string;
+  /** The dashboard page that asks the user to approve a client. */
+  consentUrl: string;
+  accessTtlMs: number;
+  refreshTtlMs: number;
+  /** Authorization codes and pending consent requests. */
+  codeTtlMs: number;
 }
 
 export type ChatProviderId = "groq" | "gemini";
@@ -219,6 +253,8 @@ export interface Config {
   seedWoocommerce?: { url: string; token: string; storeUrl?: string };
   stores: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
   hosted: { enabled: boolean; imageAllowlist: string[]; timeoutSeconds: number };
+  /** Absent = OAuth off: /mcp takes API keys only. */
+  oauth?: OAuthConfig;
 }
 
 /** Parses and validates env; throws one readable error listing every problem. */
@@ -308,6 +344,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       maxPerUser: e.STORES_MAX_PER_USER,
       timeoutSeconds: e.STORES_TIMEOUT_SECONDS,
     },
+    oauth: e.OAUTH_ENABLED ? oauthConfig(e) : undefined,
     hosted: {
       enabled: e.HOSTED_ENABLED,
       imageAllowlist: e.HOSTED_IMAGE_ALLOWLIST,
@@ -321,5 +358,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             storeUrl: e.SEED_STORE_URL,
           }
         : undefined,
+  };
+}
+
+function oauthConfig(e: {
+  PUBLIC_BASE_URL?: string;
+  PUBLIC_MCP_URL?: string;
+  DASHBOARD_URL?: string;
+  OAUTH_ACCESS_TTL_MINUTES: number;
+  OAUTH_REFRESH_TTL_DAYS: number;
+}): OAuthConfig {
+  const trim = (u: string) => u.replace(/\/+$/, "");
+  const issuer = trim(e.PUBLIC_BASE_URL ?? new URL(e.PUBLIC_MCP_URL!).origin);
+  return {
+    issuer,
+    // Clients check that the resource and the issuer are where they reached the
+    // gateway, so an explicit base (a tunnel, say) moves both.
+    resource: e.PUBLIC_BASE_URL ? `${issuer}/mcp` : trim(e.PUBLIC_MCP_URL!),
+    consentUrl: `${trim(e.DASHBOARD_URL!)}/oauth/consent`,
+    accessTtlMs: e.OAUTH_ACCESS_TTL_MINUTES * 60_000,
+    refreshTtlMs: e.OAUTH_REFRESH_TTL_DAYS * 86_400_000,
+    codeTtlMs: 10 * 60_000,
   };
 }

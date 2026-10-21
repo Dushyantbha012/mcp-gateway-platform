@@ -534,6 +534,7 @@ describe.skipIf(!hasTestDb)("dashboard auth", () => {
         chatProviders: [],
         chatProvider: null,
         searchMode: "off",
+        oauthEnabled: false,
       });
     });
   });
