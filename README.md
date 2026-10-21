@@ -277,41 +277,6 @@ The token is sent to the gateway once, stored as a Kubernetes Secret in the
 value ever contains it (`verify-phase6.sh` greps for it). Tools appear as
 `github__*` and `deepwiki__*` next to `woocommerce__*`.
 
-## Full demo script (the definition of done)
-
-`./scripts/verify-phase6.sh` runs all of this automatically
-(`system/dod.system.test.ts`). To do it by hand, as in the demo video:
-
-0. **Clean slate (optional)** — `./scripts/reset-demo.sh` wipes the store's
-   products and orders (re-seeding the 3 demo products), the audit log and every
-   user except the admin, so the demo doesn't show leftovers from the test suites.
-   Members are read-only by default, so as admin go to **Permissions**, pick user
-   A, and **Allow** `woocommerce` → `create_product` for them (leave B read-only).
-1. **Store** — http://store.local.test: add a product, check out with Cash on
-   delivery; the order is in http://store.local.test/wp-admin → WooCommerce → Orders.
-2. **User A, chat** — log in to the dashboard as a member, open Chat: _"Create
-   a product named Demo Mug priced 9.75"_ (it appears on the storefront), place
-   an order for it by hand, then _"What orders came in today?"_.
-3. **User B, Claude Code** — an admin invites B (Team → Invite member); B opens
-   the link, sets a password, creates a key under API keys, and runs the
-   command the Tools page shows:
-
-   ```bash
-   claude mcp add --transport http gateway http://gateway.local.test/mcp --header "Authorization: Bearer <B's key>"
-   ```
-
-   In Claude Code, `/mcp` lists the tools of every server. Ask _"what orders
-   came in today?"_. For two upstreams in one prompt: _"Use DeepWiki to look up
-   the structure of the woocommerce/woocommerce repo and list the products in
-   my store."_
-4. **Control** — as admin: revoke B's key (API keys or Team) and B's next call
-   is rejected; disable DeepWiki and its tools vanish from chat and from
-   Claude Code; `kubectl -n urumi scale deploy/platform-store-woocommerce-mcp
-   --replicas=0` shows WooCommerce Unreachable while GitHub and DeepWiki keep
-   working (scale back to 1 to recover).
-5. **Audit** — the Audit page lists every call above under the right user,
-   with source `mcp` (Claude Code) or `chat`.
-
 ## The dashboard
 
 http://dashboard.local.test — one origin for the browser: the dashboard's
