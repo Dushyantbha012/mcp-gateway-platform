@@ -146,6 +146,30 @@ describe("hosted manifests", () => {
           expect(block.except).toEqual(expect.arrayContaining(["10.0.0.0/8", "169.254.0.0/16"]));
         }
       });
+
+      it("selects the server pod by a label set a probe can carry without being adopted", () => {
+        const deploy = byKind(objs, "Deployment")[0] as unknown as {
+          spec: {
+            selector: { matchLabels: Record<string, string> };
+            template: { metadata: { labels: Record<string, string> } };
+          };
+        };
+        const podLabels = deploy.spec.template.metadata.labels;
+        for (const np of byKind(objs, "NetworkPolicy") as unknown as {
+          metadata: { name: string };
+          spec: { podSelector: { matchLabels?: Record<string, string> } };
+        }[]) {
+          const wanted = np.spec.podSelector.matchLabels ?? {};
+          // It covers the server pod...
+          for (const [k, v] of Object.entries(wanted))
+            expect(podLabels[k], np.metadata.name).toBe(v);
+          // ...but a pod with just these labels doesn't match the ReplicaSet's selector.
+          const adopted = Object.entries(deploy.spec.selector.matchLabels).every(
+            ([k, v]) => wanted[k] === v,
+          );
+          expect(adopted, np.metadata.name).toBe(false);
+        }
+      });
     });
   }
 

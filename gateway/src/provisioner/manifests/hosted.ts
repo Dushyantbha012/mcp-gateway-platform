@@ -320,6 +320,10 @@ function workload(spec: HostedSpec, t: StoreTemplate, checksum: string): K8sObje
  * (the cluster, its nodes, cloud metadata).
  */
 function networkPolicies(spec: HostedSpec, t: StoreTemplate): K8sObject[] {
+  // By component only (the namespace holds one workload): a network probe can
+  // carry this label without matching the Deployment's selector, which would
+  // have its ReplicaSet adopt - and then delete - the probe or the server.
+  const serverPods = { matchLabels: { "app.kubernetes.io/component": HOSTED_COMPONENT } };
   const np = (name: string, body: Record<string, unknown>): K8sObject => ({
     apiVersion: "networking.k8s.io/v1",
     kind: "NetworkPolicy",
@@ -347,7 +351,7 @@ function networkPolicies(spec: HostedSpec, t: StoreTemplate): K8sObject[] {
       ],
     }),
     np("server", {
-      podSelector: { matchLabels: selector(spec.slug) },
+      podSelector: serverPods,
       policyTypes: ["Ingress"],
       ingress: [
         {
@@ -366,7 +370,7 @@ function networkPolicies(spec: HostedSpec, t: StoreTemplate): K8sObject[] {
     ...(spec.egress === "internet"
       ? [
           np("allow-internet-egress", {
-            podSelector: { matchLabels: selector(spec.slug) },
+            podSelector: serverPods,
             policyTypes: ["Egress"],
             egress: [{ to: [{ ipBlock: { cidr: "0.0.0.0/0", except: t.privateRanges } }] }],
           }),
