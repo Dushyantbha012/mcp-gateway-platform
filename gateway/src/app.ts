@@ -134,6 +134,8 @@ export function createApp(deps: AppDeps) {
       chatProviders: (deps.chat?.providers ?? []).map((p) => ({ id: p.id, model: p.model })),
       chatProvider: deps.chat?.defaultProvider ?? null,
       searchMode: tools.mode,
+      // MCP clients can sign in with OAuth instead of pasting an API key.
+      oauthEnabled: oauth !== undefined,
     });
   });
   if (oauth) api.use("/oauth", oauthConsentApi(deps.db, oauth));

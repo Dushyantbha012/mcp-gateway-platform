@@ -5,6 +5,7 @@ import type {
   WriteApproval,
   AuditEntry,
   AuditFilters,
+  ConnectedApp,
   EffectiveTool,
   Hosted,
   HostedInput,
@@ -13,6 +14,8 @@ import type {
   McpTool,
   Meta,
   NewApiKey,
+  OAuthRequest,
+  OAuthScope,
   PermissionRule,
   PermissionSubject,
   Role,
@@ -35,6 +38,8 @@ export const POLL_MS = 5_000;
 
 export const keys = {
   me: ["me"] as const,
+  oauthRequest: (id: string) => ["oauth", "request", id] as const,
+  connectedApps: ["oauth", "apps"] as const,
   meta: ["meta"] as const,
   servers: ["servers"] as const,
   stores: ["stores"] as const,
@@ -386,5 +391,41 @@ export function useRetryHosted() {
   return useMutation({
     mutationFn: (id: string) => api<Hosted>(`/hosted/${id}/retry`, { method: "POST" }),
     onSuccess: () => invalidate(keys.hosted),
+  });
+}
+
+export function useOAuthRequest(id: string) {
+  return useQuery({
+    queryKey: keys.oauthRequest(id),
+    queryFn: () => api<OAuthRequest>(`/oauth/requests/${encodeURIComponent(id)}`),
+    enabled: id !== "",
+    retry: false,
+  });
+}
+
+/** Approve or deny; the gateway answers with where to send the browser (back to the client). */
+export function useDecideOAuth(id: string) {
+  return useMutation({
+    mutationFn: (body: { approve: boolean; scopes?: OAuthScope[] }) =>
+      api<{ redirectUrl: string }>(`/oauth/requests/${encodeURIComponent(id)}`, {
+        method: "POST",
+        body,
+      }),
+  });
+}
+
+export function useConnectedApps(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.connectedApps,
+    queryFn: () => api<ConnectedApp[]>("/oauth/apps"),
+    enabled,
+  });
+}
+
+export function useRevokeApp() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/oauth/apps/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidate(keys.connectedApps),
   });
 }

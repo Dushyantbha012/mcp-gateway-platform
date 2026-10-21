@@ -506,6 +506,75 @@ describe.skipIf(!hasTestDb)("OAuth authorization server", () => {
     });
   });
 
+  describe("connected apps", () => {
+    const apps = (cookie: string) => ({
+      list: () => request(gw.app).get("/api/oauth/apps").set("Cookie", cookie),
+      revoke: (id: string) =>
+        request(gw.app)
+          .delete(`/api/oauth/apps/${id}`)
+          .set("Cookie", cookie)
+          .set("Origin", TEST_ORIGIN),
+    });
+
+    it("lists the user's approved apps; revoking one ends its tokens and is audited", async () => {
+      const c = await tokens();
+      const mine = apps(c.user.cookie);
+      const list = await mine.list();
+      expect(list.body).toEqual([
+        {
+          id: expect.any(String),
+          clientId: c.client,
+          clientName: "Claude Code",
+          scopes: ["mcp:read", "mcp:write"],
+          createdAt: expect.any(String),
+          lastUsedAt: null,
+        },
+      ]);
+      expect(JSON.stringify(list.body)).not.toContain(c.access);
+
+      // Someone else can't see or revoke it.
+      const other = await loggedIn();
+      expect((await apps(other.cookie).list()).body).toEqual([]);
+      expect((await apps(other.cookie).revoke(list.body[0].id)).status).toBe(404);
+      expect(await accessWorks(c.access)).toBe(true);
+
+      expect((await mine.revoke(list.body[0].id)).status).toBe(204);
+      expect(await accessWorks(c.access)).toBe(false);
+      expect((await mine.list()).body).toEqual([]);
+      expect((await mine.revoke(list.body[0].id)).status).toBe(404);
+      expect((await mine.revoke("not-a-uuid")).status).toBe(404);
+
+      const audit = await t.db
+        .selectFrom("audit_log")
+        .select(["tool_name", "detail"])
+        .where("user_id", "=", c.user.user.id)
+        .orderBy("ts")
+        .execute();
+      expect(audit.map((a) => a.tool_name)).toEqual(["oauth.approve", "oauth.revoke"]);
+    });
+
+    it("needs a session and the dashboard's Origin", async () => {
+      const k = await userWithKey(t.db, `k${++n}@example.com`, "member");
+      expect(
+        (await request(gw.app).get("/api/oauth/apps").set("Authorization", `Bearer ${k.key}`))
+          .status,
+      ).toBe(403);
+      const c = await tokens();
+      const id = (await apps(c.user.cookie).list()).body[0].id;
+      const noOrigin = await request(gw.app)
+        .delete(`/api/oauth/apps/${id}`)
+        .set("Cookie", c.user.cookie);
+      expect(noOrigin.status).toBe(403);
+    });
+
+    it("/api/meta says OAuth is on", async () => {
+      const u = await loggedIn();
+      expect(
+        (await request(gw.app).get("/api/meta").set("Cookie", u.cookie)).body.oauthEnabled,
+      ).toBe(true);
+    });
+  });
+
   describe("/mcp as the resource server", () => {
     let upstream: FakeUpstream;
     let http: Server;

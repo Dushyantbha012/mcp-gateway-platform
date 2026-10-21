@@ -6,7 +6,13 @@ import { principalOf, requireSession } from "../auth/middleware.js";
 import type { OAuthConfig } from "../config.js";
 import { SCOPES, type Scope } from "../crypto/oauth.js";
 import type { Db } from "../db/db.js";
-import { getRequest, issueCode, takeRequest } from "../db/oauth.js";
+import {
+  getRequest,
+  issueCode,
+  listConnectedApps,
+  revokeUserGrant,
+  takeRequest,
+} from "../db/oauth.js";
 import { currentRequestId } from "../requestContext.js";
 import { redirectWith } from "./server.js";
 
@@ -17,7 +23,7 @@ const decisionSchema = z.object({
 });
 
 /**
- * The dashboard's consent page, behind a session (not an API key or OAuth
+ * The dashboard's consent page and "Connected apps" list, behind a session (not an API key or OAuth
  * token: only the person at the browser can approve a client) and the
  * Origin check. Mounted at /api/oauth.
  */
@@ -104,6 +110,41 @@ export function oauthConsentApi(db: Db, cfg: OAuthConfig) {
       requestId: currentRequestId(),
     });
     res.json({ redirectUrl });
+  });
+
+  /** The apps the user has approved that can still get tokens (one row per grant). */
+  api.get("/apps", async (_req, res) => {
+    const apps = await listConnectedApps(db, principalOf(res).userId);
+    res.json(
+      apps.map((a) => ({
+        id: a.familyId,
+        clientId: a.clientId,
+        clientName: a.clientName,
+        scopes: a.scope,
+        createdAt: a.createdAt,
+        lastUsedAt: a.lastUsedAt,
+      })),
+    );
+  });
+
+  /** Ends a grant: its access token stops working on the next request, its refresh token too. */
+  api.delete("/apps/:id", async (req, res) => {
+    const who = principalOf(res);
+    const id = req.params.id;
+    const apps = z.uuid().safeParse(id).success ? await listConnectedApps(db, who.userId) : [];
+    const app = apps.find((a) => a.familyId === id);
+    if (!app || !(await revokeUserGrant(db, who.userId, id))) throw notFound("Connected app");
+    await writeAudit(db, {
+      principal: who,
+      source: "dashboard",
+      serverSlug: null,
+      toolName: "oauth.revoke",
+      durationMs: 0,
+      outcome: "success",
+      detail: app.clientName,
+      requestId: currentRequestId(),
+    });
+    res.status(204).end();
   });
 
   return api;
