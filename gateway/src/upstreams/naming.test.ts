@@ -65,11 +65,13 @@ describe("buildToolIndex", () => {
       slug: "store-a",
       upstreamName: "list_products",
       readOnly: false,
+      flags: [],
     });
     expect(index.routes.get("store-b__list_products")).toEqual({
       slug: "store-b",
       upstreamName: "list_products",
       readOnly: false,
+      flags: [],
     });
   });
 

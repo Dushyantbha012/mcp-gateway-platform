@@ -405,7 +405,7 @@ describe.skipIf(!hasTestDb)("POST /api/chat", () => {
     expect((await audit("alice@example.com")).at(-1)).toMatchObject({ outcome: "tool_error" });
     expect(llm.requests[1].turns.at(-1)).toMatchObject({
       role: "tool",
-      results: [{ isError: true, output: "Order 999 not found" }],
+      results: [{ isError: true, output: expect.stringContaining("Order 999 not found") }],
     });
   });
 

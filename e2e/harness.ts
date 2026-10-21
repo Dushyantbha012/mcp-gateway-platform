@@ -70,11 +70,20 @@ health.start();
  * free: it picks a tool from the user's words, and once it has a tool result,
  * answers with it. "slow" never answers (for the Stop button).
  */
+/** The gateway fences upstream results for the model; this fake "model" reads the payload inside. */
+const unfence = (output: string): string =>
+  output
+    .replace(/^<<<UNTRUSTED TOOL RESULT[^\n]*>>>\n/, "")
+    .replace(/\n<<<END UNTRUSTED TOOL RESULT>>>$/, "");
+
 const fakeLlm: LlmClient = {
   async generate(req: LlmRequest): Promise<LlmReply> {
     const last = req.turns.at(-1);
     if (last?.role === "tool") {
-      return { text: `Tool said: ${last.results.map((r) => r.output).join(" | ")}`, calls: [] };
+      return {
+        text: `Tool said: ${last.results.map((r) => unfence(r.output)).join(" | ")}`,
+        calls: [],
+      };
     }
     const asked = last?.role === "user" ? last.text.toLowerCase() : "";
     const call = (name: string, args: Record<string, unknown> = {}): LlmReply => ({

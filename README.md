@@ -657,10 +657,14 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 - **Login rate limiting is per gateway pod** (in memory). With more
   replicas an attacker gets that many times the attempts; a shared store
   (or a rate limit at the ingress) would fix it and is not done.
-- **Prompt injection is not solved.** A malicious public upstream can put
-  instructions in its tool descriptions or results, and the chat agent may
-  follow them. Damage is limited to what the user could already do (their
-  permissions, the audit log, GitHub's read-only token), not prevented.
+- **Prompt injection is reduced, not solved.** Descriptions and results from
+  upstreams are cleaned of invisible characters and comments, capped in size,
+  flagged with a gateway notice when they read like instructions to the model,
+  and (in chat) fenced as untrusted data (`gateway/src/security/untrusted.ts`,
+  threat model section 3). The detection is keyword-based and can be evaded
+  by rephrasing, so the real limits are still the user's permissions, per-call
+  approval of writes, the audit log and GitHub's read-only token. Flags are not
+  yet shown in the dashboard.
 - **The SSRF guard resolves names with the cluster resolver.** A resolver that
   lies is out of scope; the egress NetworkPolicy (no private ranges) is the
   second wall behind the code check.
