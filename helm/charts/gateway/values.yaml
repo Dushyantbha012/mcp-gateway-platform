@@ -137,6 +137,11 @@ hosted:
     - docker.io/mcp/
   # Not ready after this long = failed, with the pod's reason (ImagePullBackOff...).
   timeoutSeconds: 600
+  imagePullPolicy: IfNotPresent
+  # The stdio bridge (mcp-bridge/), copied into each stdio server's pod.
+  bridge:
+    image: mcp-gateway/mcp-bridge:dev
+    imagePullPolicy: IfNotPresent
 
 stores:
   enabled: false

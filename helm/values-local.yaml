@@ -43,6 +43,15 @@ gateway:
     template:
       baseDomain: store.local.test
       storageClassName: local-path
+  # Hosted MCP servers (needs stores.enabled: the provisioner builds them).
+  # The bridge image is built locally and imported into k3d.
+  hosted:
+    enabled: true
+    imageAllowlist:
+      - docker.io/mcp/
+      # This repo's own images (imported into k3d), e.g. woocommerce-mcp as an
+      # http server in scripts/verify-hosted.sh.
+      - docker.io/mcp-gateway/
 
 dashboard:
   ingress:

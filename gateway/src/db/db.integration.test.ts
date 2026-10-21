@@ -46,6 +46,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "008_write_approvals",
       "009_stores",
       "010_hosted_servers",
+      "011_hosted_auth_env",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -84,6 +85,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "008_write_approvals",
       "009_stores",
       "010_hosted_servers",
+      "011_hosted_auth_env",
     ]);
   });
 });

@@ -72,6 +72,12 @@ const fields = {
   env: envMap,
   egress: z.enum(["none", "internet"]),
   size: z.enum(["small", "medium"]),
+  /** http only: the variable the image reads its bearer token from; the provisioner generates the token. */
+  authTokenEnv: z
+    .string()
+    .regex(ENV_NAME, "must be a valid environment variable name")
+    .refine((k) => !RESERVED_ENV.test(k), "BRIDGE_* variables are reserved for the bridge")
+    .nullable(),
 };
 
 const createSchema = z
@@ -85,6 +91,7 @@ const createSchema = z
     secretEnv: envMap.default({}),
     egress: fields.egress.default("none"),
     size: fields.size.default("small"),
+    authTokenEnv: fields.authTokenEnv.default(null),
   })
   .strict();
 
@@ -106,6 +113,7 @@ const updateSchema = z
     secretEnv: envRecord(envValue.nullable()),
     egress: fields.egress,
     size: fields.size,
+    authTokenEnv: fields.authTokenEnv,
   })
   .partial()
   .strict();
@@ -116,7 +124,25 @@ function checkSpec(spec: {
   command: string[];
   envKeys: string[];
   secretKeys: string[];
+  authTokenEnv: string | null;
 }) {
+  if (spec.authTokenEnv && spec.transport !== "http") {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "authTokenEnv is for http servers: stdio servers sit behind the bridge's own token",
+    );
+  }
+  if (
+    spec.authTokenEnv &&
+    (spec.envKeys.includes(spec.authTokenEnv) || spec.secretKeys.includes(spec.authTokenEnv))
+  ) {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      `${spec.authTokenEnv} is set by the provisioner (authTokenEnv); don't set it yourself`,
+    );
+  }
   if (spec.transport === "stdio" && spec.command.length === 0) {
     throw new HttpError(
       400,
@@ -154,6 +180,7 @@ export function hostedView(h: HostedWithCreator) {
     libc: h.libc,
     env: h.env,
     secretEnvKeys: h.secret_env_keys,
+    authTokenEnv: h.auth_token_env,
     egress: h.egress,
     size: h.size,
     status: h.status,
@@ -247,6 +274,7 @@ export function hostedApi(db: Db, secrets: HostedEnvStore, config: HostedConfig)
       command: body.command,
       envKeys: Object.keys(body.env),
       secretKeys,
+      authTokenEnv: body.authTokenEnv,
     });
     await allowedImage(who, body.slug, body.image);
 
@@ -268,6 +296,7 @@ export function hostedApi(db: Db, secrets: HostedEnvStore, config: HostedConfig)
         libc: body.libc,
         env: JSON.stringify(body.env),
         secret_env_keys: secretKeys,
+        auth_token_env: body.authTokenEnv,
         egress: body.egress,
         size: body.size,
         created_by: who.userId,
@@ -315,6 +344,7 @@ export function hostedApi(db: Db, secrets: HostedEnvStore, config: HostedConfig)
       command,
       envKeys: Object.keys(env),
       secretKeys,
+      authTokenEnv: body.authTokenEnv !== undefined ? body.authTokenEnv : current.auth_token_env,
     });
 
     const changes: HostedServerUpdate = {
@@ -328,6 +358,7 @@ export function hostedApi(db: Db, secrets: HostedEnvStore, config: HostedConfig)
       secret_env_keys: secretKeys,
       egress: body.egress,
       size: body.size,
+      auth_token_env: body.authTokenEnv,
     };
     // Only a name change leaves the pod alone; anything else is re-applied.
     const respec =

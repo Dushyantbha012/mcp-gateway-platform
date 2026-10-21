@@ -9,14 +9,18 @@
   "mcpClientLabel" .Values.global.mcpClientLabel
   "ingressClassName" (.Values.global.ingress.className | default "traefik")
   "internetEgress" (ternary $np.internetEgress true (hasKey $np "internetEgress"))
+  "hosted" (dict
+    "bridgeImage" .Values.hosted.bridge.image
+    "bridgeImagePullPolicy" .Values.hosted.bridge.imagePullPolicy
+    "imagePullPolicy" .Values.hosted.imagePullPolicy)
 -}}
 {{- with $np.privateRanges }}{{- $_ := set $derived "privateRanges" . }}{{- end }}
 {{- if $ic.namespace }}
 {{- $_ := set $derived "ingressController" (dict "namespace" $ic.namespace "podLabels" $ic.podLabels) }}
 {{- end }}
 {{- $template := mergeOverwrite $derived (deepCopy .Values.stores.template) -}}
-# The provisioner turns rows in the `stores` table into WooCommerce stores, one
-# namespace each. It is the only workload that can create namespaces, so it
+# The provisioner turns rows in the `stores` table into WooCommerce stores, and
+# rows in `hosted_servers` into image-run MCP servers, one namespace each. It is the only workload that can create namespaces, so it
 # gets a ServiceAccount of its own: the gateway's stays limited to upstream
 # Secrets (rbac.yaml), and a compromised gateway still can't create a pod.
 apiVersion: v1
@@ -42,10 +46,12 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "create", "patch", "delete"]
-  # Store Secrets are create-only; upstream credentials are replaced in place (update).
+  # Store Secrets are create-only; upstream credentials are replaced in place
+  # (update); a hosted server's env Secret is applied (patch) from the
+  # gateway's copy.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update", "delete"]
+    verbs: ["get", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["configmaps", "services", "persistentvolumeclaims", "resourcequotas", "limitranges"]
     verbs: ["get", "create", "patch"]
@@ -63,8 +69,12 @@ rules:
     resources: ["jobs"]
     verbs: ["get", "create", "delete"]
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
+    resources: ["ingresses"]
     verbs: ["get", "create", "patch"]
+  # delete: a hosted server whose egress is switched off loses its internet policy.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -131,6 +141,8 @@ spec:
               value: {{ .Values.upstreamSecrets.namespace | quote }}
             - name: STORES_TIMEOUT_SECONDS
               value: {{ .Values.stores.timeoutSeconds | quote }}
+            - name: HOSTED_TIMEOUT_SECONDS
+              value: {{ .Values.hosted.timeoutSeconds | quote }}
             - name: PROVISIONER_CONCURRENCY
               value: {{ .Values.stores.provisioner.concurrency | quote }}
             - name: PROVISIONER_PORT

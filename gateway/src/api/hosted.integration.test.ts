@@ -127,6 +127,11 @@ describe.skipIf(!hasTestDb)("hosted servers API", () => {
       { ...thinking, env: { TOKEN: "a" }, secretEnv: { TOKEN: "b" } },
       /both a plain and a secret/,
     );
+    await bad({ ...thinking, authTokenEnv: "MCP_AUTH_TOKEN" }, /authTokenEnv is for http/);
+    await bad(
+      { ...thinking, transport: "http", authTokenEnv: "TOKEN", env: { TOKEN: "x" } },
+      /set by the provisioner/,
+    );
     await bad({ ...thinking, transport: "sse" }, /transport/);
     await bad({ ...thinking, path: "mcp" }, /path/);
     await bad({ ...thinking, privileged: true }, /privileged/);

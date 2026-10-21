@@ -78,6 +78,15 @@ export const storeTemplateSchema = z.object({
       resources: resources.default(r("50m", "64Mi", "500m", "256Mi")),
     })
     .prefault({}),
+  /** Hosted MCP servers (they share the network shape and gateway labels above). */
+  hosted: z
+    .object({
+      /** Ships the stdio bridge; an init container copies it into the server's pod. */
+      bridgeImage: z.string().default("mcp-gateway/mcp-bridge:dev"),
+      bridgeImagePullPolicy: z.enum(["Always", "IfNotPresent", "Never"]).default("IfNotPresent"),
+      imagePullPolicy: z.enum(["Always", "IfNotPresent", "Never"]).default("IfNotPresent"),
+    })
+    .prefault({}),
   /**
    * Per-store ResourceQuota. Requests are capped tightly (what the scheduler
    * reserves on a laptop-sized node); limits more loosely, because the

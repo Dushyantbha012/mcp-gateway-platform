@@ -6,6 +6,7 @@ import type { Store } from "../db/schema.js";
 import { deleteStoreRow, transitionStore, updateStore } from "../db/stores.js";
 import type { K8sClient, K8sObject } from "../k8s/client.js";
 import { log } from "../logger.js";
+import { guardNamespace, ProvisionFailure, Waiting, workloadReady, type Step } from "./checks.js";
 import {
   bootstrapJob,
   MANAGED_BY_LABEL,
@@ -35,14 +36,8 @@ export interface ReconcilerDeps {
 
 export type ReconcileOutcome = "progress" | "waiting" | "ready" | "failed" | "deleted";
 
-/** A step can't make progress until something in the cluster changes. */
-class Waiting {
-  constructor(readonly condition: string) {}
-}
-/** A step failed for good (until the user retries). */
-export class StoreFailure extends Error {}
-
-type Step = { name: string; run: () => Promise<Waiting | void> };
+/** A store failed for good (until the user retries). */
+export const StoreFailure = ProvisionFailure;
 
 /**
  * Turns `stores` rows into running stores and back. Holds no state between
@@ -68,7 +63,9 @@ export class StoreReconciler {
       else return "waiting";
     } catch (err) {
       const reason =
-        err instanceof StoreFailure ? err.message : `unexpected error: ${(err as Error).message}`;
+        err instanceof ProvisionFailure
+          ? err.message
+          : `unexpected error: ${(err as Error).message}`;
       log("warn", "store reconcile failed", { store: store.slug, kind, reason });
       if (kind === "provision") {
         await transitionStore(this.deps.db, store.id, ["provisioning"], {
@@ -120,7 +117,7 @@ export class StoreReconciler {
       {
         name: "namespace",
         run: async () => {
-          const waiting = await this.guardNamespace(ns);
+          const waiting = await guardNamespace(kube, ns);
           if (waiting) return waiting;
           await kube.apply(storeNamespaceObject(spec));
         },
@@ -138,10 +135,10 @@ export class StoreReconciler {
           for (const obj of storeManifests(spec, t, files).slice(1)) await kube.apply(obj);
         },
       },
-      { name: "mysql", run: () => this.workloadReady(ns, "StatefulSet", "mysql") },
-      { name: "wordpress", run: () => this.workloadReady(ns, "Deployment", "wordpress") },
+      { name: "mysql", run: () => workloadReady(kube, ns, "StatefulSet", "mysql") },
+      { name: "wordpress", run: () => workloadReady(kube, ns, "Deployment", "wordpress") },
       { name: "bootstrap", run: () => this.bootstrapDone(store) },
-      { name: "mcp", run: () => this.workloadReady(ns, "Deployment", "woocommerce-mcp") },
+      { name: "mcp", run: () => workloadReady(kube, ns, "Deployment", "woocommerce-mcp") },
       { name: "register", run: () => this.register(store) },
     ];
 
@@ -149,7 +146,7 @@ export class StoreReconciler {
       const result = await step.run();
       if (result instanceof Waiting) {
         if (this.now() > deadline) {
-          throw new StoreFailure(`timed out at ${step.name}: ${result.condition}`);
+          throw new ProvisionFailure(`timed out at ${step.name}: ${result.condition}`);
         }
         await this.recordProgress(store, step.name, result.condition);
         return "waiting";
@@ -176,76 +173,6 @@ export class StoreReconciler {
     await transitionStore(this.deps.db, store.id, ["provisioning"], { step, reason });
   }
 
-  /** Never adopt a namespace the provisioner didn't create (e.g. kube-system, or a typo'd collision). */
-  private async guardNamespace(name: string): Promise<Waiting | void> {
-    const existing = await this.deps.kube.get({
-      apiVersion: "v1",
-      kind: "Namespace",
-      metadata: { name },
-    });
-    if (existing && existing.metadata.labels?.[MANAGED_BY_LABEL] !== MANAGED_BY_VALUE) {
-      throw new StoreFailure(
-        `namespace ${name} already exists and is not managed by the provisioner`,
-      );
-    }
-    if (existing?.metadata.deletionTimestamp) {
-      return new Waiting(`namespace ${name} is still being deleted`);
-    }
-  }
-
-  private async workloadReady(
-    ns: string,
-    kind: "Deployment" | "StatefulSet",
-    name: string,
-  ): Promise<Waiting | void> {
-    const obj = await this.deps.kube.get({
-      apiVersion: "apps/v1",
-      kind,
-      metadata: { name, namespace: ns },
-    });
-    if (!obj) return new Waiting(`${name} not created yet`);
-    const status = (obj.status ?? {}) as {
-      readyReplicas?: number;
-      conditions?: { type: string; status: string; message?: string }[];
-    };
-    if ((status.readyReplicas ?? 0) >= 1) return;
-    // A quota refusal shows up on the Deployment (its ReplicaSet can't create pods).
-    const failure = status.conditions?.find(
-      (c) => c.type === "ReplicaFailure" && c.status === "True",
-    );
-    if (failure?.message) return new Waiting(`${name}: ${failure.message}`);
-    return new Waiting(await this.podProblem(ns, name));
-  }
-
-  /** The most telling reason a component's pods aren't ready yet. */
-  private async podProblem(ns: string, component: string): Promise<string> {
-    const pods = await this.deps.kube.list("v1", "Pod", {
-      namespace: ns,
-      labelSelector: `app.kubernetes.io/component=${component}`,
-    });
-    for (const pod of pods) {
-      const status = (pod.status ?? {}) as {
-        phase?: string;
-        conditions?: { type: string; status: string; reason?: string; message?: string }[];
-        containerStatuses?: { state?: { waiting?: { reason?: string; message?: string } } }[];
-      };
-      for (const c of status.containerStatuses ?? []) {
-        const w = c.state?.waiting;
-        if (w?.reason && w.reason !== "ContainerCreating" && w.reason !== "PodInitializing") {
-          return `${component}: ${w.reason}${w.message ? ` (${w.message})` : ""}`;
-        }
-      }
-      const unscheduled = status.conditions?.find(
-        (c) => c.type === "PodScheduled" && c.status === "False",
-      );
-      if (unscheduled)
-        return `${component}: unschedulable (${unscheduled.message ?? unscheduled.reason})`;
-    }
-    return pods.length
-      ? `waiting for ${component} to become ready`
-      : `waiting for ${component} pods`;
-  }
-
   /** The bootstrap Job: created once, then watched until it completes or fails. */
   private async bootstrapDone(store: Store): Promise<Waiting | void> {
     const { kube, template: t } = this.deps;
@@ -262,7 +189,7 @@ export class StoreReconciler {
     const failed = conditions.find((c) => c.type === "Failed");
     if (failed) {
       const tail = await this.jobLogTail(job.metadata.namespace!);
-      throw new StoreFailure(
+      throw new ProvisionFailure(
         `bootstrap failed: ${failed.reason ?? "Failed"}${failed.message ? ` - ${failed.message}` : ""}` +
           (tail ? `; last log line: ${tail}` : ""),
       );
@@ -297,7 +224,7 @@ export class StoreReconciler {
       metadata: { name: SECRET_NAMES.mcpAuth, namespace: storeNamespace(store.slug) },
     });
     const encoded = secret?.data?.token;
-    if (!encoded) throw new StoreFailure("the store's MCP token Secret is missing");
+    if (!encoded) throw new ProvisionFailure("the store's MCP token Secret is missing");
     await credentials.put(store.id, Buffer.from(encoded, "base64").toString("utf8"));
     const taken = await db
       .selectFrom("mcp_servers")
@@ -305,7 +232,7 @@ export class StoreReconciler {
       .where("slug", "=", store.slug)
       .where("id", "!=", store.id)
       .executeTakeFirst();
-    if (taken) throw new StoreFailure(`an MCP server named '${store.slug}' already exists`);
+    if (taken) throw new ProvisionFailure(`an MCP server named '${store.slug}' already exists`);
     await db
       .insertInto("mcp_servers")
       .values({
@@ -346,7 +273,7 @@ export class StoreReconciler {
     const ns = await kube.get(ref);
     if (ns) {
       if (ns.metadata.labels?.[MANAGED_BY_LABEL] !== MANAGED_BY_VALUE) {
-        throw new StoreFailure(
+        throw new ProvisionFailure(
           `refusing to delete namespace ${name}: not managed by the provisioner`,
         );
       }
