@@ -3,6 +3,7 @@ import type { ChatSetup } from "../api/chat.js";
 import type { AuthConfig } from "../config.js";
 import { generateApiKey } from "../crypto/apiKeys.js";
 import { hashPassword } from "../crypto/passwords.js";
+import { MemoryHostedEnvStore } from "../credentials/hostedEnv.js";
 import { MemoryCredentialStore } from "../credentials/store.js";
 import { insertApiKey } from "../db/apiKeys.js";
 import type { Db } from "../db/db.js";
@@ -39,6 +40,7 @@ export function buildTestApp(
     /** Hold MCP writes until approved in the dashboard (the production default). */
     holdMcpWrites?: boolean;
     stores?: { enabled: boolean; maxPerUser: number; timeoutSeconds: number };
+    hosted?: { enabled: boolean; imageAllowlist: string[]; timeoutSeconds: number };
   } = {},
 ) {
   const credentials = new MemoryCredentialStore();
@@ -51,10 +53,17 @@ export function buildTestApp(
     auth: { ...testAuthConfig, ...auth },
     trustProxyHops: opts.trustProxyHops ?? 0,
     stores: opts.stores ?? { enabled: true, maxPerUser: 2, timeoutSeconds: 900 },
+    hosted: opts.hosted ?? {
+      enabled: true,
+      imageAllowlist: ["docker.io/mcp/", "ghcr.io/acme/server"],
+      timeoutSeconds: 600,
+    },
   };
+  const hostedEnv = new MemoryHostedEnvStore();
   const deps = {
     db,
     credentials,
+    hostedEnv,
     registry,
     health,
     router,

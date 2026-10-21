@@ -150,6 +150,12 @@ spec:
               value: {{ .Values.stores.maxPerUser | quote }}
             - name: STORES_TIMEOUT_SECONDS
               value: {{ .Values.stores.timeoutSeconds | quote }}
+            - name: HOSTED_ENABLED
+              value: {{ .Values.hosted.enabled | quote }}
+            - name: HOSTED_IMAGE_ALLOWLIST
+              value: {{ join "," .Values.hosted.imageAllowlist | quote }}
+            - name: HOSTED_TIMEOUT_SECONDS
+              value: {{ .Values.hosted.timeoutSeconds | quote }}
             {{- if .Values.seedWoocommerce.enabled }}
             - name: SEED_WOOCOMMERCE_URL
               value: {{ include "gateway.woocommerceUrl" . | quote }}

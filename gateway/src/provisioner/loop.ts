@@ -3,8 +3,11 @@ import type { Store } from "../db/schema.js";
 import { pendingStores } from "../db/stores.js";
 import { log } from "../logger.js";
 
-export interface Reconciles {
-  reconcile(store: Store): Promise<unknown>;
+/** What the loop works on: a store or a hosted server row. */
+type Row = { id: string; slug: string };
+
+export interface Reconciles<T extends Row = Store> {
+  reconcile(row: T): Promise<unknown>;
 }
 
 /**
@@ -14,7 +17,7 @@ export interface Reconciles {
  * on pods, so several go in parallel - and a store is never reconciled by
  * two passes at once.
  */
-export class ProvisionerLoop {
+export class ProvisionerLoop<T extends Row = Store> {
   private readonly inFlight = new Map<string, Promise<void>>();
   private timer?: NodeJS.Timeout;
   private stopped = true;
@@ -23,8 +26,13 @@ export class ProvisionerLoop {
 
   constructor(
     private readonly db: Db,
-    private readonly reconciler: Reconciles,
-    private readonly opts: { tickMs: number; concurrency: number },
+    private readonly reconciler: Reconciles<T>,
+    private readonly opts: {
+      tickMs: number;
+      concurrency: number;
+      /** Rows with work left, oldest first; default: stores. */
+      pending?: (db: Db, limit: number) => Promise<T[]>;
+    },
   ) {}
 
   start(): void {
@@ -58,14 +66,14 @@ export class ProvisionerLoop {
   private async scan(): Promise<void> {
     const free = this.opts.concurrency - this.inFlight.size;
     if (free <= 0) return;
-    const rows = await pendingStores(this.db, this.opts.concurrency * 4);
+    const pending =
+      this.opts.pending ?? (pendingStores as unknown as (db: Db, limit: number) => Promise<T[]>);
+    const rows = await pending(this.db, this.opts.concurrency * 4);
     for (const store of rows.filter((s) => !this.inFlight.has(s.id)).slice(0, free)) {
       const run = this.reconciler
         .reconcile(store)
         .then(() => undefined)
-        .catch((err) =>
-          log("error", "reconcile crashed", { store: store.slug, error: String(err) }),
-        )
+        .catch((err) => log("error", "reconcile crashed", { slug: store.slug, error: String(err) }))
         .finally(() => {
           this.inFlight.delete(store.id);
         });

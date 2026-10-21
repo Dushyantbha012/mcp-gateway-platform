@@ -4,6 +4,7 @@ import { auditApi } from "./api/audit.js";
 import { statsApi } from "./api/stats.js";
 import { chatApi, type ChatSetup } from "./api/chat.js";
 import { approvalsApi } from "./api/approvals.js";
+import { hostedApi } from "./api/hosted.js";
 import { authApi } from "./api/auth.js";
 import { errorHandler, HttpError } from "./api/errors.js";
 import { permissionsApi } from "./api/permissions.js";
@@ -12,6 +13,7 @@ import { storesApi } from "./api/stores.js";
 import { usersApi } from "./api/users.js";
 import { principalOf, requireAuth } from "./auth/middleware.js";
 import type { Config } from "./config.js";
+import { MemoryHostedEnvStore, type HostedEnvStore } from "./credentials/hostedEnv.js";
 import type { CredentialStore } from "./credentials/store.js";
 import type { Db } from "./db/db.js";
 import { mcpRouter } from "./mcp/endpoint.js";
@@ -31,7 +33,9 @@ export interface AppDeps {
   router: ToolRouter;
   /** Which upstream URLs may be registered (SSRF guard). */
   ssrf: SsrfPolicy;
-  config: Pick<Config, "auth" | "trustProxyHops"> & Partial<Pick<Config, "stores">>;
+  config: Pick<Config, "auth" | "trustProxyHops"> & Partial<Pick<Config, "stores" | "hosted">>;
+  /** Secret env values of hosted servers; default: in memory (tests). */
+  hostedEnv?: HostedEnvStore;
   /** The chat agent's model and limits; absent = chat switched off (503). */
   chat?: ChatSetup;
   /** Prometheus metrics; absent = no /metrics endpoint. */
@@ -116,6 +120,14 @@ export function createApp(deps: AppDeps) {
     storesApi(
       deps.db,
       deps.config.stores ?? { enabled: false, maxPerUser: 0, timeoutSeconds: 900 },
+    ),
+  );
+  api.use(
+    "/hosted",
+    hostedApi(
+      deps.db,
+      deps.hostedEnv ?? new MemoryHostedEnvStore(),
+      deps.config.hosted ?? { enabled: false, imageAllowlist: [], timeoutSeconds: 600 },
     ),
   );
   api.use("/approvals", approvalsApi(deps.db, tools));

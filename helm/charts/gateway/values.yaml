@@ -126,6 +126,23 @@ seedWoocommerce:
 # a namespace of its own - store-<slug>, served at <slug>.<template.baseDomain> -
 # and registers its MCP server with the gateway. Off = no provisioner and no
 # cluster-wide RBAC; the Stores page only lists the Helm-installed store.
+# Hosted MCP servers: admins run a container image as an MCP server, one
+# namespace each, built by the provisioner (needs stores.enabled for the
+# provisioner pod). Images are untrusted code, so only these repositories may
+# be used - prefixes ending in "/" ("docker.io/mcp/") or exact repositories -
+# and never by ":latest".
+hosted:
+  enabled: false
+  imageAllowlist:
+    - docker.io/mcp/
+  # Not ready after this long = failed, with the pod's reason (ImagePullBackOff...).
+  timeoutSeconds: 600
+  imagePullPolicy: IfNotPresent
+  # The stdio bridge (mcp-bridge/), copied into each stdio server's pod.
+  bridge:
+    image: mcp-gateway/mcp-bridge:dev
+    imagePullPolicy: IfNotPresent
+
 stores:
   enabled: false
   maxPerUser: 2

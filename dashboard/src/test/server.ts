@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import type { Server, User } from "@/api/types";
+import type { Hosted, Server, User } from "@/api/types";
 
 export const server = setupServer();
 
@@ -57,8 +57,40 @@ export function loggedInAs(user: User) {
     http.get("/api/meta", () =>
       HttpResponse.json({ mcpUrl: "http://gateway.test/mcp", chatEnabled: true }),
     ),
+    // Hosting off unless a test says otherwise (admins only ask).
+    http.get("/api/hosted", () =>
+      HttpResponse.json({ enabled: false, imageAllowlist: [], servers: [] }),
+    ),
   );
 }
 
 export const apiError = (status: number, code: string, message: string) =>
   HttpResponse.json({ error: { code, message } }, { status });
+
+export function hostedFixture(overrides: Partial<Hosted> = {}): Hosted {
+  return {
+    id: "44444444-4444-4444-4444-444444444444",
+    slug: "thinking",
+    name: "Sequential thinking",
+    image: "mcp/sequentialthinking@sha256:cd3174b2",
+    transport: "stdio",
+    command: ["node", "dist/index.js"],
+    port: 8080,
+    path: "/mcp",
+    libc: "musl",
+    env: {},
+    secretEnvKeys: [],
+    authTokenEnv: null,
+    egress: "none",
+    size: "small",
+    status: "provisioning",
+    step: "server",
+    reason: null,
+    namespace: "mcp-thinking",
+    serverId: null,
+    createdBy: { id: admin.id, email: admin.email },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}

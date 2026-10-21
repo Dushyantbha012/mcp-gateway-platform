@@ -1,9 +1,12 @@
 import {
+  Box,
   Clock,
   KeyRound,
+  Loader2,
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Server as ServerIcon,
   ShieldAlert,
   Timer,
@@ -14,8 +17,17 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
-import { useDeleteServer, useMe, useRefreshServer, useSaveServer, useServers } from "@/api/hooks";
-import type { Server } from "@/api/types";
+import {
+  useDeleteHosted,
+  useDeleteServer,
+  useHosted,
+  useMe,
+  useRefreshServer,
+  useRetryHosted,
+  useSaveServer,
+  useServers,
+} from "@/api/hooks";
+import type { Hosted, Server, StoreStatus } from "@/api/types";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
@@ -56,17 +68,150 @@ function StatusDot({ status }: { status: Server["status"] }) {
 
 const AUTH_LABEL = { none: "No auth", bearer: "Bearer token", header: "Custom header" };
 
+const HOSTED_STATUS: Record<StoreStatus, { label: string; className: string }> = {
+  provisioning: { label: "Deploying", className: "bg-warning-soft text-warning" },
+  ready: { label: "Running", className: "bg-success-soft text-success" },
+  failed: { label: "Deploy failed", className: "bg-danger-soft text-destructive" },
+  deleting: { label: "Deleting", className: "bg-muted text-muted-foreground" },
+};
+
+/** The provisioner's hosted steps (gateway/src/provisioner/hostedReconciler.ts), in words. */
+const HOSTED_STEP: Record<string, string> = {
+  queued: "Queued",
+  updating: "Queued to redeploy",
+  retry: "Retrying",
+  namespace: "Creating namespace",
+  secrets: "Writing secrets",
+  resources: "Creating resources",
+  server: "Starting the server",
+  register: "Registering with the gateway",
+  deleting: "Queued for deletion",
+  "deleting-namespace": "Removing namespace",
+};
+
+function HostedStatusBadge({ status }: { status: StoreStatus }) {
+  const { label, className } = HOSTED_STATUS[status];
+  const busy = status === "provisioning" || status === "deleting";
+  return (
+    <Badge className={cn("gap-1 border-transparent", className)} data-status={status}>
+      {busy && <Loader2 className="size-3 animate-spin" aria-hidden />}
+      {label}
+    </Badge>
+  );
+}
+
+/** Image, deploy progress or failure reason, and the admin actions for a hosted server. */
+function HostedDetails({ hosted, onEdit }: { hosted: Hosted; onEdit: () => void }) {
+  const retry = useRetryHosted();
+  const remove = useDeleteHosted();
+  const fail = (err: unknown) => toast.error(errorMessage(err));
+  const step = hosted.step ? (HOSTED_STEP[hosted.step] ?? hosted.step) : "Queued";
+  return (
+    <div className="space-y-2 text-xs" data-testid={`hosted-${hosted.slug}`}>
+      <p className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+        <Box className="size-3.5 shrink-0" aria-hidden />
+        <code className="truncate" title={hosted.image}>
+          {hosted.image}
+        </code>
+      </p>
+      {hosted.status !== "ready" && (
+        <div className="flex items-start gap-2">
+          <HostedStatusBadge status={hosted.status} />
+          {hosted.status === "failed" ? (
+            <span className="text-destructive">{hosted.reason ?? "Failed"}</span>
+          ) : (
+            <span>
+              {step}
+              {hosted.reason && (
+                <span className="block text-muted-foreground">{hosted.reason}</span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+      {hosted.status !== "deleting" && (
+        <div className="flex items-center gap-1">
+          {hosted.status === "failed" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={retry.isPending}
+              onClick={() =>
+                retry.mutate(hosted.id, {
+                  onSuccess: () => toast.success(`Retrying ${hosted.name}`),
+                  onError: fail,
+                })
+              }
+            >
+              <RotateCcw /> Retry
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={onEdit} aria-label={`Edit ${hosted.name}`}>
+            <Pencil />
+          </Button>
+          <ConfirmButton
+            variant="ghost"
+            title={`Delete ${hosted.name}?`}
+            description={
+              <>
+                Its pod, namespace and secret variables are deleted and its tools disappear for
+                everyone. Past audit entries are kept.
+              </>
+            }
+            confirmLabel="Delete"
+            onConfirm={() =>
+              remove.mutate(hosted.id, {
+                onSuccess: () => toast.success(`${hosted.name} is being deleted`),
+                onError: fail,
+              })
+            }
+          >
+            <Trash2 /> <span className="sr-only">Delete {hosted.name}</span>
+          </ConfirmButton>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A hosted server the gateway can't route to yet (or any more): not in the servers list. */
+function PendingHostedCard({ hosted, onEdit }: { hosted: Hosted; onEdit: () => void }) {
+  return (
+    <Card data-testid={`server-${hosted.slug}`} className="gap-4">
+      <CardHeader className="gap-1">
+        <div className="flex items-start justify-between gap-2">
+          <CardTitle className="truncate text-base">
+            <h2>{hosted.name}</h2>
+          </CardTitle>
+          <Badge variant="secondary">Hosted</Badge>
+        </div>
+        <p className="truncate text-xs text-muted-foreground">
+          <code>{hosted.slug}</code> · {hosted.transport === "stdio" ? "stdio, bridged" : "HTTP"}
+        </p>
+      </CardHeader>
+      <CardContent>
+        <HostedDetails hosted={hosted} onEdit={onEdit} />
+      </CardContent>
+    </Card>
+  );
+}
+
 function ServerCard({
   server,
+  hosted,
   isAdmin,
   index,
   onEdit,
+  onEditHosted,
   onOpen,
 }: {
   server: Server;
+  /** Its hosted_servers row, for a hosted server (admins only). */
+  hosted?: Hosted;
   isAdmin: boolean;
   index: number;
   onEdit: () => void;
+  onEditHosted: () => void;
   onOpen: () => void;
 }) {
   const save = useSaveServer();
@@ -127,6 +272,7 @@ function ServerCard({
             <dd>Checked {server.enabled ? timeAgo(server.lastCheckedAt) : "-"}</dd>
           </div>
         </dl>
+        {isAdmin && hosted && <HostedDetails hosted={hosted} onEdit={onEditHosted} />}
       </CardContent>
       <CardFooter className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
         <Button variant="secondary" size="sm" onClick={onOpen}>
@@ -269,8 +415,13 @@ export function ServersPage() {
   const { data: me } = useMe();
   const servers = useServers();
   const isAdmin = me?.role === "admin";
+  const hosted = useHosted(isAdmin);
   // undefined = closed, null = adding, a server = editing it
   const [editing, setEditing] = useState<Server | null | undefined>(undefined);
+  const [editingHosted, setEditingHosted] = useState<Hosted | undefined>(undefined);
+  const hostedById = new Map((hosted.data?.servers ?? []).map((h) => [h.id, h]));
+  const registered = new Set(servers.data?.map((s) => s.id));
+  const pending = (hosted.data?.servers ?? []).filter((h) => !registered.has(h.id));
   const [openId, setOpenId] = useState<string | undefined>(undefined);
   const location = useLocation();
   const requested = (location.state as { open?: string } | null)?.open;
@@ -305,14 +456,20 @@ export function ServersPage() {
           <ServerCard
             key={server.id}
             server={server}
+            hosted={hostedById.get(server.id)}
             isAdmin={isAdmin}
             index={i}
             onEdit={() => setEditing(server)}
+            onEditHosted={() => setEditingHosted(hostedById.get(server.id))}
             onOpen={() => setOpenId(server.id)}
           />
         ))}
+        {servers.data &&
+          pending.map((h) => (
+            <PendingHostedCard key={h.id} hosted={h} onEdit={() => setEditingHosted(h)} />
+          ))}
       </div>
-      {servers.data?.length === 0 && (
+      {servers.data?.length === 0 && pending.length === 0 && (
         <EmptyState
           icon={ServerIcon}
           title="No MCP servers registered yet."
@@ -325,7 +482,19 @@ export function ServersPage() {
       )}
       <ServerDrawer server={opened} onClose={() => setOpenId(undefined)} />
       {editing !== undefined && (
-        <ServerFormDialog server={editing ?? undefined} onClose={() => setEditing(undefined)} />
+        <ServerFormDialog
+          server={editing ?? undefined}
+          hostedEnabled={hosted.data?.enabled}
+          imageAllowlist={hosted.data?.imageAllowlist}
+          onClose={() => setEditing(undefined)}
+        />
+      )}
+      {editingHosted && (
+        <ServerFormDialog
+          hosted={editingHosted}
+          imageAllowlist={hosted.data?.imageAllowlist}
+          onClose={() => setEditingHosted(undefined)}
+        />
       )}
     </>
   );

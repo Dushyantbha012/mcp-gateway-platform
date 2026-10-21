@@ -12,7 +12,8 @@ purpose: this is the whole network design, readable top to bottom.
   bootstrap Job ──► MySQL, public internet (downloads WooCommerce)
   provisioner ──► Postgres, Kubernetes API   (no ingress at all)
   gateway ──► each provisioned store's MCP server (store-<slug> namespaces,
-              which carry their own deny-by-default policies)
+              which carry their own deny-by-default policies), and each
+              hosted MCP server (mcp-<slug> namespaces, likewise)
 
 NetworkPolicies only ever add allowances, and a pod that no policy selects is
 wide open - hence the default-deny at the top, which selects every pod. Ports
@@ -150,6 +151,17 @@ spec:
               app.kubernetes.io/component: woocommerce-mcp
       ports:
         - port: 3000
+{{- end }}
+{{- if .Values.gateway.hosted.enabled }}
+    # Hosted MCP servers, each in its own namespace; their own policies admit
+    # the gateway on the server's port only (ports differ per image).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              urumi.ai/managed-by: provisioner
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hosted-mcp
 {{- end }}
 {{- range $np.extraGatewayEgress }}
     - {{- toYaml . | nindent 6 }}

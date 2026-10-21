@@ -6,6 +6,9 @@ import type {
   AuditEntry,
   AuditFilters,
   EffectiveTool,
+  Hosted,
+  HostedInput,
+  HostedList,
   Invite,
   McpTool,
   Meta,
@@ -35,6 +38,7 @@ export const keys = {
   meta: ["meta"] as const,
   servers: ["servers"] as const,
   stores: ["stores"] as const,
+  hosted: ["hosted"] as const,
   tools: ["tools"] as const,
   users: ["users"] as const,
   userKeys: (userId: string) => ["users", userId, "keys"] as const,
@@ -342,5 +346,45 @@ export function useRetryStore() {
   return useMutation({
     mutationFn: (id: string) => api<Store>(`/stores/${id}/retry`, { method: "POST" }),
     onSuccess: () => invalidate(keys.stores),
+  });
+}
+
+/** Admins only. Polled quickly while any hosted server is still changing. */
+export function useHosted(enabled = true) {
+  return useQuery({
+    queryKey: keys.hosted,
+    queryFn: () => api<HostedList>("/hosted"),
+    enabled,
+    refetchInterval: (query) =>
+      query.state.data?.servers.some((s) => s.status === "provisioning" || s.status === "deleting")
+        ? STORE_POLL_MS
+        : POLL_MS,
+  });
+}
+
+export function useSaveHosted() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: string; input: Partial<HostedInput> }) =>
+      id
+        ? api<Hosted>(`/hosted/${id}`, { method: "PATCH", body: input })
+        : api<Hosted>("/hosted", { method: "POST", body: input }),
+    onSuccess: () => invalidate(keys.hosted),
+  });
+}
+
+export function useDeleteHosted() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<Hosted>(`/hosted/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidate(keys.hosted, keys.servers, keys.tools),
+  });
+}
+
+export function useRetryHosted() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => api<Hosted>(`/hosted/${id}/retry`, { method: "POST" }),
+    onSuccess: () => invalidate(keys.hosted),
   });
 }

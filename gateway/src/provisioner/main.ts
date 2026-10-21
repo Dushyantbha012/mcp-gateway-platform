@@ -4,10 +4,12 @@ import { Counter, Gauge, Registry } from "prom-client";
 import { z } from "zod";
 import { K8sSecretStore } from "../credentials/k8s.js";
 import { createDb, migrate, waitForDatabase } from "../db/db.js";
+import { pendingHosted } from "../db/hosted.js";
 import { storeCounts } from "../db/stores.js";
 import { K8sClient } from "../k8s/client.js";
 import { log } from "../logger.js";
 import { loadBootstrapFiles } from "./bootstrapFiles.js";
+import { HostedReconciler } from "./hostedReconciler.js";
 import { ProvisionerLoop } from "./loop.js";
 import { StoreReconciler } from "./reconciler.js";
 import { parseStoreTemplate } from "./template.js";
@@ -29,6 +31,7 @@ const env = z
     UPSTREAM_SECRETS_NAMESPACE: z.string().regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/),
     STORES_TEMPLATE: z.string().optional(),
     STORES_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(900),
+    HOSTED_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(600),
     PROVISIONER_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(3),
     PROVISIONER_TICK_MS: z.coerce.number().int().min(500).default(5_000),
     PROVISIONER_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
@@ -41,8 +44,8 @@ const files = await loadBootstrapFiles();
 const registry = new Registry();
 const reconciles = new Counter({
   name: "provisioner_reconcile_total",
-  help: "Store reconcile passes, by kind (provision/delete) and outcome.",
-  labelNames: ["kind", "outcome"],
+  help: "Reconcile passes, by resource (store/hosted), kind (provision/delete) and outcome.",
+  labelNames: ["resource", "kind", "outcome"],
   registers: [registry],
 });
 let leader = false;
@@ -113,16 +116,37 @@ const reconciler = new StoreReconciler({
   template,
   files,
   timeoutMs: env.STORES_TIMEOUT_SECONDS * 1000,
-  onOutcome: (kind, outcome) => reconciles.inc({ kind, outcome }),
+  onOutcome: (kind, outcome) => reconciles.inc({ resource: "store", kind, outcome }),
+});
+const hostedReconciler = new HostedReconciler({
+  db,
+  kube,
+  credentials,
+  template,
+  secretsNamespace: env.UPSTREAM_SECRETS_NAMESPACE,
+  timeoutMs: env.HOSTED_TIMEOUT_SECONDS * 1000,
+  onOutcome: (kind, outcome) => reconciles.inc({ resource: "hosted", kind, outcome }),
 });
 const loop = new ProvisionerLoop(db, reconciler, {
   tickMs: env.PROVISIONER_TICK_MS,
   concurrency: env.PROVISIONER_CONCURRENCY,
 });
 
-lockClient.on("notification", () => loop.trigger());
+// Hosted servers get a loop of their own: a slow store bootstrap never
+// holds up a hosted server, or the other way round.
+const hostedLoop = new ProvisionerLoop(db, hostedReconciler, {
+  tickMs: env.PROVISIONER_TICK_MS,
+  concurrency: env.PROVISIONER_CONCURRENCY,
+  pending: pendingHosted,
+});
+
+lockClient.on("notification", (msg) =>
+  msg.channel === "hosted_changed" ? hostedLoop.trigger() : loop.trigger(),
+);
 await lockClient.query("listen stores_changed");
+await lockClient.query("listen hosted_changed");
 loop.start();
+hostedLoop.start();
 log("info", "provisioner running", {
   baseDomain: template.baseDomain,
   concurrency: env.PROVISIONER_CONCURRENCY,
@@ -133,7 +157,8 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     log("info", "shutting down", { signal });
     setTimeout(() => process.exit(1), 20_000).unref();
     void (async () => {
-      await loop.stop(); // finish in-flight passes; each step is safe to redo anyway
+      // Finish in-flight passes; each step is safe to redo anyway.
+      await Promise.all([loop.stop(), hostedLoop.stop()]);
       await lockClient.end().catch(() => undefined);
       await db.destroy();
       health.close();

@@ -177,11 +177,11 @@ export class K8sClient {
     return (((await res.json()) as { items?: T[] }).items ?? []) as T[];
   }
 
-  /** The last `lines` of a pod's log ("" when there is none yet). */
-  async podLogTail(namespace: string, pod: string, lines = 5): Promise<string> {
+  /** The last `lines` of a pod's log ("" when there is none yet); `previous`: its last crashed run. */
+  async podLogTail(namespace: string, pod: string, lines = 5, previous = false): Promise<string> {
     const res = await this.request(
       "GET",
-      `${resourcePath("v1", "Pod", namespace, pod)}/log?tailLines=${lines}`,
+      `${resourcePath("v1", "Pod", namespace, pod)}/log?tailLines=${lines}${previous ? "&previous=true" : ""}`,
     );
     if (res.status === 404 || res.status === 400) return "";
     if (res.status !== 200) await this.fail(res, `read log of pod ${pod}`);

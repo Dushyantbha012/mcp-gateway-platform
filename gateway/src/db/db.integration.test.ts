@@ -45,6 +45,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "007_audit_detail",
       "008_write_approvals",
       "009_stores",
+      "010_hosted_servers",
+      "011_hosted_auth_env",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -55,6 +57,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
     expect(tables.rows.map((r) => r.table_name)).toEqual([
       "api_keys",
       "audit_log",
+      "hosted_servers",
       "invites",
       "mcp_servers",
       "sessions",
@@ -81,6 +84,8 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "007_audit_detail",
       "008_write_approvals",
       "009_stores",
+      "010_hosted_servers",
+      "011_hosted_auth_env",
     ]);
   });
 });

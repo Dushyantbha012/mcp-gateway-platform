@@ -85,6 +85,63 @@ export interface StoreList {
   stores: Store[];
 }
 
+export type HostedTransport = "http" | "stdio";
+
+/** hostedView in gateway/src/api/hosted.ts. Secret variables appear by name only. */
+export interface Hosted {
+  id: string;
+  slug: string;
+  name: string;
+  image: string;
+  transport: HostedTransport;
+  /** stdio: what the bridge runs in place of the image's entrypoint. */
+  command: string[];
+  port: number;
+  path: string;
+  libc: "glibc" | "musl";
+  env: Record<string, string>;
+  secretEnvKeys: string[];
+  /** http only: the variable the image reads its generated bearer token from. */
+  authTokenEnv: string | null;
+  egress: "none" | "internet";
+  size: "small" | "medium";
+  status: StoreStatus;
+  step: string | null;
+  reason: string | null;
+  namespace: string | null;
+  /** Its mcp_servers row once registered (the same id). */
+  serverId: string | null;
+  createdBy: { id: string; email: string | null } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HostedList {
+  enabled: boolean;
+  imageAllowlist: string[];
+  servers: Hosted[];
+}
+
+/**
+ * Create or update body. On update `secretEnv` merges: a value sets that
+ * variable, null removes it, unmentioned ones keep their stored value.
+ */
+export interface HostedInput {
+  slug?: string;
+  name: string;
+  image: string;
+  transport?: HostedTransport;
+  command: string[];
+  port: number;
+  path: string;
+  libc: Hosted["libc"];
+  env: Record<string, string>;
+  secretEnv: Record<string, string | null>;
+  authTokenEnv: string | null;
+  egress: Hosted["egress"];
+  size: Hosted["size"];
+}
+
 export interface ServerInput {
   slug: string;
   name: string;
