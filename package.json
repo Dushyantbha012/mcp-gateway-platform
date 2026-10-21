@@ -8,6 +8,7 @@
   },
   "workspaces": [
     "woocommerce-mcp",
+    "mcp-bridge",
     "gateway",
     "dashboard",
     "e2e"
