@@ -185,6 +185,8 @@ export async function issueTokens(
   db: Db,
   grant: Grant,
   ttl: { accessMs: number; refreshMs: number },
+  /** A refresh may ask for less (RFC 6749 section 6); the refresh token keeps the whole grant. */
+  accessScope: string[] = grant.scope,
 ): Promise<IssuedTokens> {
   const access = newAccessToken();
   const refresh = newRefreshToken();
@@ -199,7 +201,13 @@ export async function issueTokens(
   await db
     .insertInto("oauth_tokens")
     .values([
-      { ...common, hash: access.hash, kind: "access", expires_at: new Date(now + ttl.accessMs) },
+      {
+        ...common,
+        scope: accessScope,
+        hash: access.hash,
+        kind: "access",
+        expires_at: new Date(now + ttl.accessMs),
+      },
       {
         ...common,
         hash: refresh.hash,
@@ -217,7 +225,7 @@ export async function issueTokens(
     accessToken: access.value,
     refreshToken: refresh.value,
     expiresIn: Math.floor(ttl.accessMs / 1000),
-    scope: grant.scope,
+    scope: accessScope,
   };
 }
 
@@ -365,19 +373,24 @@ export async function listConnectedApps(db: Db, userId: string): Promise<Connect
       "t.family_id as familyId",
       "t.client_id as clientId",
       "c.name as clientName",
-      "t.scope",
+      // The grant's scope is its refresh tokens' (fixed at consent); an access
+      // token from a narrowing refresh may carry less.
+      sql<
+        string[]
+      >`(array_agg(array_to_string(t.scope, ' ')) filter (where t.kind = 'refresh'))[1]`.as(
+        "scope",
+      ),
       sql<Date>`min(t.created_at)`.as("createdAt"),
       sql<Date | null>`max(t.last_used_at)`.as("lastUsedAt"),
     ])
     .where("t.user_id", "=", userId)
-    // A family's scope is fixed at consent, so grouping by it keeps one row per grant.
-    .groupBy(["t.family_id", "t.client_id", "c.name", "t.scope"])
+    .groupBy(["t.family_id", "t.client_id", "c.name"])
     .having(
       sql<boolean>`bool_or(t.kind = 'refresh' and t.used_at is null and t.revoked_at is null and t.expires_at > now())`,
     )
     .orderBy("createdAt", "desc")
     .execute();
-  return rows;
+  return rows.map((r) => ({ ...r, scope: (r.scope as unknown as string).split(" ") }));
 }
 
 /** Revoke one of the user's grants; false if it isn't theirs (or doesn't exist). */

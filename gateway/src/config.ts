@@ -372,7 +372,9 @@ function oauthConfig(e: {
   const issuer = trim(e.PUBLIC_BASE_URL ?? new URL(e.PUBLIC_MCP_URL!).origin);
   return {
     issuer,
-    resource: trim(e.PUBLIC_MCP_URL ?? `${issuer}/mcp`),
+    // Clients check that the resource and the issuer are where they reached the
+    // gateway, so an explicit base (a tunnel, say) moves both.
+    resource: e.PUBLIC_BASE_URL ? `${issuer}/mcp` : trim(e.PUBLIC_MCP_URL!),
     consentUrl: `${trim(e.DASHBOARD_URL!)}/oauth/consent`,
     accessTtlMs: e.OAUTH_ACCESS_TTL_MINUTES * 60_000,
     refreshTtlMs: e.OAUTH_REFRESH_TTL_DAYS * 86_400_000,

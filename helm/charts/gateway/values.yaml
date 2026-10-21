@@ -148,8 +148,10 @@ hosted:
 # access tokens. Needs dashboardUrl (the consent page is there).
 oauth:
   enabled: false
-  # The issuer, as clients reach the gateway. Empty = this chart's Ingress URL.
-  # Behind a tunnel (claude.ai), set it to the tunnel's https URL.
+  # The issuer, as clients reach the gateway; the resource is its /mcp. Empty =
+  # this chart's Ingress URL. Behind a tunnel (claude.ai), set it to the
+  # tunnel's https URL. Clients such as Claude Code refuse a plain-http token
+  # endpoint unless it is localhost.
   publicBaseUrl: ""
   accessTtlMinutes: 60
   refreshTtlDays: 30

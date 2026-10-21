@@ -467,6 +467,40 @@ describe.skipIf(!hasTestDb)("OAuth authorization server", () => {
       expect(res.body.error).toBe("invalid_scope");
     });
 
+    it("a refresh can ask for less: that access token is narrowed, the grant isn't", async () => {
+      const c = await tokens();
+      const narrow = await token({
+        grant_type: "refresh_token",
+        client_id: c.client,
+        refresh_token: c.refresh,
+        scope: "mcp:read",
+      });
+      expect(narrow.status).toBe(200);
+      expect(narrow.body.scope).toBe("mcp:read");
+      const p = await findPrincipalByAccessHash(t.db, sha256(narrow.body.access_token));
+      expect(p?.oauth?.scopes).toEqual(["mcp:read"]);
+
+      // Still one connected app, with what the user approved.
+      const apps = await request(gw.app).get("/api/oauth/apps").set("Cookie", c.user.cookie);
+      expect(apps.body).toHaveLength(1);
+      expect(apps.body[0].scopes).toEqual(["mcp:read", "mcp:write"]);
+
+      // The next refresh, with no scope, gets the whole grant again; write implies read.
+      const full = await token({
+        grant_type: "refresh_token",
+        client_id: c.client,
+        refresh_token: narrow.body.refresh_token,
+      });
+      expect(full.body.scope).toBe("mcp:read mcp:write");
+      const write = await token({
+        grant_type: "refresh_token",
+        client_id: c.client,
+        refresh_token: full.body.refresh_token,
+        scope: "mcp:write",
+      });
+      expect(write.body.scope).toBe("mcp:read mcp:write");
+    });
+
     it("unknown clients and grant types get RFC 6749 errors", async () => {
       const unknown = await token({ grant_type: "authorization_code", client_id: "nope" });
       expect(unknown.status).toBe(401);

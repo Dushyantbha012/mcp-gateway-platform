@@ -278,20 +278,23 @@ export function oauthServer(db: Db, cfg: OAuthConfig) {
       if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
 
       let grant: Grant;
+      let accessScope: string[] | undefined;
       if (body.grant_type === "authorization_code") {
         grant = await exchangeCode(body, client.id);
       } else if (body.grant_type === "refresh_token") {
-        grant = await refresh(body, client.id);
+        ({ grant, accessScope } = await refresh(body, client.id));
       } else {
         throw new OAuthError(
           "unsupported_grant_type",
           "grant_type must be authorization_code or refresh_token",
         );
       }
-      const issued = await issueTokens(db, grant, {
-        accessMs: cfg.accessTtlMs,
-        refreshMs: cfg.refreshTtlMs,
-      });
+      const issued = await issueTokens(
+        db,
+        grant,
+        { accessMs: cfg.accessTtlMs, refreshMs: cfg.refreshTtlMs },
+        accessScope,
+      );
       res.json({
         access_token: issued.accessToken,
         token_type: "Bearer",
@@ -335,7 +338,10 @@ export function oauthServer(db: Db, cfg: OAuthConfig) {
     return r.grant;
   }
 
-  async function refresh(body: Record<string, unknown>, clientId: string): Promise<Grant> {
+  async function refresh(
+    body: Record<string, unknown>,
+    clientId: string,
+  ): Promise<{ grant: Grant; accessScope?: string[] }> {
     const token = str(body.refresh_token) ?? "";
     if (!looksLikeRefreshToken(token))
       throw new OAuthError("invalid_grant", "Invalid refresh token");
@@ -349,19 +355,24 @@ export function oauthServer(db: Db, cfg: OAuthConfig) {
         "Invalid, expired, revoked or already used refresh token",
       );
     }
-    // A refresh keeps the scope that was granted; asking for more is refused.
+    // A refresh may ask for less than was granted (for this access token
+    // only: the new refresh token keeps the grant); asking for more is refused.
     const asked = str(body.scope);
-    if (asked !== undefined) {
+    let accessScope: string[] | undefined;
+    if (asked !== undefined && asked.trim() !== "") {
       const scope = parseScope(asked);
       if (!Array.isArray(scope) || scope.some((s) => !r.grant.scope.includes(s))) {
         throw new OAuthError("invalid_scope", "A refresh can't add scopes that weren't granted");
       }
+      // As on the consent page, writing implies reading.
+      if (scope.includes("mcp:write")) scope.push("mcp:read");
+      accessScope = SCOPES.filter((s) => scope.includes(s));
     }
     const resource = str(body.resource);
     if (resource !== undefined && !sameResource(resource, r.grant.resource)) {
       throw new OAuthError("invalid_target", `This grant is for ${r.grant.resource}`);
     }
-    return r.grant;
+    return { grant: r.grant, accessScope };
   }
 
   /**

@@ -261,6 +261,16 @@ describe("loadConfig", () => {
       });
     });
 
+    it("an explicit PUBLIC_BASE_URL (a tunnel) moves the resource too", () => {
+      expect(
+        loadConfig({
+          ...on,
+          PUBLIC_MCP_URL: "http://gateway.local.test/mcp",
+          PUBLIC_BASE_URL: "https://abc.ngrok.app",
+        }).oauth,
+      ).toMatchObject({ issuer: "https://abc.ngrok.app", resource: "https://abc.ngrok.app/mcp" });
+    });
+
     it("falls back to PUBLIC_MCP_URL's origin, and reads the lifetimes", () => {
       const oauth = loadConfig({
         ...on,
