@@ -41,5 +41,8 @@ spec:
       - http01:
           ingress:
             ingressClassName: traefik
+            # Default is NodePort, which each store's ResourceQuota forbids
+            # (services.nodeports=0); Traefik only needs a ClusterIP.
+            serviceType: ClusterIP
 YAML
 echo "server-setup done"

@@ -90,13 +90,15 @@ export const storeTemplateSchema = z.object({
   /**
    * Per-store ResourceQuota. Requests are capped tightly (what the scheduler
    * reserves on a laptop-sized node); limits more loosely, because the
-   * store's own containers already add up to 3 CPU / 2.5Gi of limits.
+   * store's own containers (including the bootstrap Job) already add up to
+   * 3 CPU / 2.5Gi of limits, and a TLS store also runs cert-manager's solver
+   * pod while its certificate is issued. 3 CPU left no room for it.
    */
   quota: z
     .object({
       requestsCpu: z.string().default("1"),
       requestsMemory: z.string().default("1536Mi"),
-      limitsCpu: z.string().default("3"),
+      limitsCpu: z.string().default("4"),
       limitsMemory: z.string().default("3Gi"),
       pods: z.number().int().default(8),
       pvcs: z.number().int().default(2),

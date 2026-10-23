@@ -623,19 +623,24 @@ What differs from local, all through values:
 | `networkPolicy.apiServerCidr` | k3d node IP | the instance's private IP (`kubectl get endpoints kubernetes`) |
 | Stores | `<slug>.store.local.test` | `<slug>.stores.<ip>.sslip.io` (wildcard DNS, so no hosts lines) |
 
-Two things the default-deny networking needed: cert-manager's HTTP-01 solver pods
-run in the `urumi` namespace, so `deploy.sh` adds a NetworkPolicy
-(`allow-acme-solver`) that lets Traefik reach them; without it no certificate is
-issued. Upstreams (DeepWiki, GitHub) are registered afterwards with
+Three things TLS needed under default-deny networking and quotas: cert-manager's
+HTTP-01 solver pods run in the `urumi` namespace, so `deploy.sh` adds a
+NetworkPolicy (`allow-acme-solver`) that lets Traefik reach them; each provisioned
+store gets the same policy (`acme-solver`) from the provisioner when `tls` is on;
+and the issuer uses `serviceType: ClusterIP`, because the default NodePort solver
+Service is refused by the stores' quota (`services.nodeports=0`). Upstreams (DeepWiki, GitHub) are registered afterwards with
 `GATEWAY_URL=https://gateway.<ip>.sslip.io ./scripts/register-upstreams.sh`, and
 chat keys are added as the `gateway-groq` / `gateway-gemini` Secrets followed by
 `kubectl -n urumi rollout restart deployment/platform-gateway`.
 
 Checked on the instance: all pods Running, the three Ingress certificates Ready
 (valid Let's Encrypt over HTTPS), and the WooCommerce (5 tools), DeepWiki (3) and
-GitHub (49) upstreams Connected. Not re-run there: the definition-of-done suite,
-store provisioning (its per-store certificates may need the same ACME NetworkPolicy
-inside each `store-<slug>` namespace), hosted servers and the OAuth flow.
+GitHub (49) upstreams Connected. The repo's own `verify-oauth.sh`, `verify-hosted.sh`
+and `verify-phase10.sh` (copies with the URLs pointed at the instance) pass there:
+OAuth over HTTPS, hosted servers (stdio and HTTP), and two stores built in parallel,
+reached through the one `/mcp` endpoint, isolated by NetworkPolicy, serving valid
+Let's Encrypt certificates, and torn down completely. Not re-run there: the
+definition-of-done suite and the Playwright tests.
 `helm/values-prod.yaml` stays the registry-based variant with placeholders.
 
 ## Upgrades and rollback
@@ -664,7 +669,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 | Handling many tools (search-then-execute) | Done | `gateway/src/search/`, README "Search-then-execute" |
 | Observability (metrics, request IDs, unreachable reasons, Grafana + alerts) | Done | `gateway/src/metrics/`, `gateway/src/requestContext.ts`, `docs/observability/` |
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
-| Production-like VPS deployment | **Deployed** on AWS EC2 + k3s with Let's Encrypt TLS (core stack and three upstreams checked; DoD suite, stores, hosted and OAuth not re-run there) | `deploy/ec2/`, README "Deploying to a VPS", `helm/values-prod.yaml` (registry variant, placeholders), `docs/SYSTEM_DESIGN.md` §8 |
+| Production-like VPS deployment | **Deployed** on AWS EC2 + k3s with Let's Encrypt TLS (core stack, three upstreams, OAuth, hosted servers and multi-store verified there; DoD suite not re-run) | `deploy/ec2/`, README "Deploying to a VPS", `helm/values-prod.yaml` (registry variant, placeholders), `docs/SYSTEM_DESIGN.md` §8 |
 | Scaling (multi-replica, rate limits) | Partial: stateless API, `gateway.replicas` works; rate limits are per pod | Rate limits are per gateway pod (login, chat) |
 | OAuth on the gateway (Claude Code, MCP Inspector, claude.ai) | Done | `gateway/src/oauth/`, `gateway/src/db/oauth.ts`, `dashboard/src/pages/OAuthConsentPage.tsx`, `scripts/verify-oauth.sh`; README "Stores, hosted MCP servers and OAuth" |
 | Hosted MCP servers (deploy an image; stdio through a bridge) | Done | `gateway/src/provisioner/hostedReconciler.ts`, `gateway/src/provisioner/manifests/hosted.ts`, `mcp-bridge/`, `scripts/verify-hosted.sh` |

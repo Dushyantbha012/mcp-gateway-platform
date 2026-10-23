@@ -148,9 +148,12 @@ from the table above in three ways: images are built locally and imported into
 k3s' containerd instead of pulled from a registry; hostnames are
 `<name>.<ip-with-dashes>.sslip.io`, so no domain is needed; and a NetworkPolicy
 (`allow-acme-solver`) lets Traefik reach cert-manager's HTTP-01 solver pods, which
-the default-deny policy would otherwise block. The core stack, TLS and the three
-upstreams were checked there; the DoD suite, store provisioning, hosted servers
-and OAuth were not re-run. `values-prod.yaml` remains the registry-based variant
+the default-deny policy would otherwise block. Provisioned stores get the same
+policy (`acme-solver`) when TLS is on, the issuer's solver Services are ClusterIP
+(a NodePort is refused by the stores' quota), and the per-store limits quota is
+4 CPU because the four store pods already use 3 and the solver pod needs room.
+The core stack, TLS, the three upstreams, OAuth, hosted servers and multi-store
+were verified there with the repo's `verify-*` scripts; the DoD suite was not re-run. `values-prod.yaml` remains the registry-based variant
 with placeholders.
 
 ## 9. Not done, on purpose
