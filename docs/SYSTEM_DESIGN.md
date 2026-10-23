@@ -142,9 +142,16 @@ Same charts; only values differ (`helm/values-local.yaml` vs `helm/values-prod.y
 **Caution:** `helm upgrade --reuse-values` keeps old computed values and skips the
 defaults of newly added keys. Always pass the values files explicitly.
 
-**Status of the production path:** `values-prod.yaml` is the documented set of
-changes with placeholder domains/registry; it renders and lints in CI, but the
-charts have not yet been deployed to a real VPS.
+**Status of the production path:** the charts are deployed to a single-node k3s on
+AWS EC2 by `deploy/ec2/deploy.sh` (README "Deploying to a VPS"). That path differs
+from the table above in three ways: images are built locally and imported into
+k3s' containerd instead of pulled from a registry; hostnames are
+`<name>.<ip-with-dashes>.sslip.io`, so no domain is needed; and a NetworkPolicy
+(`allow-acme-solver`) lets Traefik reach cert-manager's HTTP-01 solver pods, which
+the default-deny policy would otherwise block. The core stack, TLS and the three
+upstreams were checked there; the DoD suite, store provisioning, hosted servers
+and OAuth were not re-run. `values-prod.yaml` remains the registry-based variant
+with placeholders.
 
 ## 9. Not done, on purpose
 

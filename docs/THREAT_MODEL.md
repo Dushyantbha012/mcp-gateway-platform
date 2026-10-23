@@ -182,4 +182,6 @@ New actors: **MCP clients that registered themselves** (anyone can register) and
 - **Open registration** means anyone who can reach the gateway can create client
   records; they are rate limited per pod and hold no access until approved.
 - **Local test setup uses plain HTTP**; production values turn on TLS and the
-  `Secure` cookie flag, but this has not yet been exercised on a real VPS.
+  `Secure` cookie flag. The EC2 deployment serves everything over HTTPS (Let's
+  Encrypt); the Security Group still allows SSH from anywhere, which should be
+  narrowed to the operator's IP.
