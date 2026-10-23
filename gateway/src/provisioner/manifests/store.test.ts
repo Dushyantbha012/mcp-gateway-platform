@@ -181,6 +181,23 @@ describe("store manifests", () => {
     });
   });
 
+  it("with TLS, let the ingress controller reach cert-manager's HTTP-01 solver, and nothing else new", () => {
+    expect(policies(all).some((p) => p.name === "acme-solver")).toBe(false);
+    const tls = parseStoreTemplate('{"tls":true}');
+    const solver = policies(storeManifests(spec, tls, files)).find(
+      (p) => p.name === "acme-solver",
+    )!;
+    expect(solver.podSelector).toEqual({
+      matchLabels: { "acme.cert-manager.io/http01-solver": "true" },
+    });
+    expect(solver.policyTypes).toEqual(["Ingress"]);
+    expect(solver.ingress).toHaveLength(1);
+    expect(solver.ingress![0].from![0]).toEqual({
+      namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "kube-system" } },
+      podSelector: { matchLabels: tls.ingressController.podLabels },
+    });
+  });
+
   it("let traffic out of the namespace only to DNS, and the bootstrap Job to the public internet", () => {
     const outside: string[] = [];
     for (const p of policies(all)) {

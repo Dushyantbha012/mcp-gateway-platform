@@ -625,6 +625,30 @@ function networkPolicies(spec: StoreSpec, t: StoreTemplate): K8sObject[] {
       policyTypes: ["Egress"],
       egress: [{ to: [pods("mysql")], ports: [{ port: 3306 }] }, ...internet],
     }),
+    // cert-manager's HTTP-01 solver runs in the store's namespace while a
+    // certificate is issued; without this the default-deny policy blocks the
+    // ingress controller from reaching it and the certificate never issues.
+    ...(t.tls
+      ? [
+          np("acme-solver", {
+            podSelector: { matchLabels: { "acme.cert-manager.io/http01-solver": "true" } },
+            policyTypes: ["Ingress"],
+            ingress: [
+              {
+                from: [
+                  {
+                    namespaceSelector: {
+                      matchLabels: { "kubernetes.io/metadata.name": t.ingressController.namespace },
+                    },
+                    podSelector: { matchLabels: t.ingressController.podLabels },
+                  },
+                ],
+                ports: [{ port: 8089 }],
+              },
+            ],
+          }),
+        ]
+      : []),
     np("woocommerce-mcp", {
       ...pods("woocommerce-mcp"),
       policyTypes: ["Ingress", "Egress"],

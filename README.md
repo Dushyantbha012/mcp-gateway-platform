@@ -19,7 +19,7 @@ plus SSRF protection, deny-by-default networking, hygiene for untrusted upstream
 On top of that: members can provision their own isolated stores, admins can deploy
 MCP servers from an image, and MCP clients such as Claude Code, MCP Inspector and
 claude.ai can sign in with OAuth.
-The production values file is documented but not yet deployed to a real VPS.
+The same charts are deployed to a single-node k3s on AWS EC2 (see [Deploying to a VPS](#deploying-to-a-vps-aws-ec2--k3s)); the full definition-of-done suite has not been re-run there.
 
 ## Layout
 
@@ -595,6 +595,54 @@ its access on the next request.
   `<tunnel>/mcp` as a custom connector. Close the tunnel and reset the value when done.
 - Checked live with Claude Code, MCP Inspector 2.10 and claude.ai.
 
+## Deploying to a VPS (AWS EC2 + k3s)
+
+The same charts run on one Ubuntu EC2 instance (`m7i-flex.large`, 2 vCPU / 8 GB)
+with only values changed. `deploy/ec2/deploy.sh` does it from your laptop:
+
+```bash
+LETSENCRYPT_EMAIL=you@example.com ./deploy/ec2/deploy.sh ubuntu@<public-ip> ~/key.pem
+```
+
+Open ports 22, 80 and 443 in the Security Group first. The script:
+
+1. builds the four images for `linux/amd64` and streams them into k3s' containerd
+   (no registry; `imagePullPolicy: IfNotPresent` with the `:dev` tags);
+2. on the instance (`deploy/ec2/server-setup.sh`): adds swap, installs k3s with
+   `--secrets-encryption`, Helm, cert-manager and a Let's Encrypt `ClusterIssuer`;
+3. runs `scripts/create-secrets.sh` and `helm upgrade --install` with a generated
+   `values-ec2.yaml`.
+
+What differs from local, all through values:
+
+| | Local (k3d) | EC2 (k3s) |
+|---|---|---|
+| Hostnames | `*.local.test` in `/etc/hosts` | `dashboard.`, `store.`, `gateway.` + `<ip-with-dashes>.sslip.io` (no domain needed) |
+| TLS | none | cert-manager + Let's Encrypt (HTTP-01); `gateway.dashboardUrl` is `https://`, so the session cookie gets `Secure` |
+| Images | `k3d image import` | built locally, imported into k3s containerd |
+| `networkPolicy.apiServerCidr` | k3d node IP | the instance's private IP (`kubectl get endpoints kubernetes`) |
+| Stores | `<slug>.store.local.test` | `<slug>.stores.<ip>.sslip.io` (wildcard DNS, so no hosts lines) |
+
+Three things TLS needed under default-deny networking and quotas: cert-manager's
+HTTP-01 solver pods run in the `urumi` namespace, so `deploy.sh` adds a
+NetworkPolicy (`allow-acme-solver`) that lets Traefik reach them; each provisioned
+store gets the same policy (`acme-solver`) from the provisioner when `tls` is on;
+and the issuer uses `serviceType: ClusterIP`, because the default NodePort solver
+Service is refused by the stores' quota (`services.nodeports=0`). Upstreams (DeepWiki, GitHub) are registered afterwards with
+`GATEWAY_URL=https://gateway.<ip>.sslip.io ./scripts/register-upstreams.sh`, and
+chat keys are added as the `gateway-groq` / `gateway-gemini` Secrets followed by
+`kubectl -n urumi rollout restart deployment/platform-gateway`.
+
+Checked on the instance: all pods Running, the three Ingress certificates Ready
+(valid Let's Encrypt over HTTPS), and the WooCommerce (5 tools), DeepWiki (3) and
+GitHub (49) upstreams Connected. The repo's own `verify-oauth.sh`, `verify-hosted.sh`
+and `verify-phase10.sh` (copies with the URLs pointed at the instance) pass there:
+OAuth over HTTPS, hosted servers (stdio and HTTP), and two stores built in parallel,
+reached through the one `/mcp` endpoint, isolated by NetworkPolicy, serving valid
+Let's Encrypt certificates, and torn down completely. Not re-run there: the
+definition-of-done suite and the Playwright tests.
+`helm/values-prod.yaml` stays the registry-based variant with placeholders.
+
 ## Upgrades and rollback
 
 ```bash
@@ -621,7 +669,7 @@ The store's bootstrap Job is idempotent and re-runs on every upgrade.
 | Handling many tools (search-then-execute) | Done | `gateway/src/search/`, README "Search-then-execute" |
 | Observability (metrics, request IDs, unreachable reasons, Grafana + alerts) | Done | `gateway/src/metrics/`, `gateway/src/requestContext.ts`, `docs/observability/` |
 | Upgrades and rollback | Documented | README "Upgrades and rollback" |
-| Production-like VPS deployment | Values documented, **not deployed** | `helm/values-prod.yaml` (placeholders), `docs/SYSTEM_DESIGN.md` §8 |
+| Production-like VPS deployment | **Deployed** on AWS EC2 + k3s with Let's Encrypt TLS (core stack, three upstreams, OAuth, hosted servers and multi-store verified there; DoD suite not re-run) | `deploy/ec2/`, README "Deploying to a VPS", `helm/values-prod.yaml` (registry variant, placeholders), `docs/SYSTEM_DESIGN.md` §8 |
 | Scaling (multi-replica, rate limits) | Partial: stateless API, `gateway.replicas` works; rate limits are per pod | Rate limits are per gateway pod (login, chat) |
 | OAuth on the gateway (Claude Code, MCP Inspector, claude.ai) | Done | `gateway/src/oauth/`, `gateway/src/db/oauth.ts`, `dashboard/src/pages/OAuthConsentPage.tsx`, `scripts/verify-oauth.sh`; README "Stores, hosted MCP servers and OAuth" |
 | Hosted MCP servers (deploy an image; stdio through a bridge) | Done | `gateway/src/provisioner/hostedReconciler.ts`, `gateway/src/provisioner/manifests/hosted.ts`, `mcp-bridge/`, `scripts/verify-hosted.sh` |

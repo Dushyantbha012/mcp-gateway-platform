@@ -179,7 +179,7 @@ stores:
     tls: false
     ingressAnnotations: {}
     storageClassName: ""
-    # quota: { requestsCpu: "1", requestsMemory: 1536Mi, limitsCpu: "3", limitsMemory: 3Gi, pods: 8, pvcs: 2, storage: 3Gi }
+    # quota: { requestsCpu: "1", requestsMemory: 1536Mi, limitsCpu: "4", limitsMemory: 3Gi, pods: 8, pvcs: 2, storage: 3Gi }
     # woocommerceMcp: { image: ..., imagePullPolicy: IfNotPresent }
 
 postgres:
