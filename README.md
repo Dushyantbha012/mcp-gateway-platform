@@ -633,6 +633,13 @@ Service is refused by the stores' quota (`services.nodeports=0`). Upstreams (Dee
 chat keys are added as the `gateway-groq` / `gateway-gemini` Secrets followed by
 `kubectl -n urumi rollout restart deployment/platform-gateway`.
 
+With GitHub (49 tools), DeepWiki, WooCommerce and the stores connected, sending every
+tool definition to Groq's free tier failed with HTTP 413 (request too large), so
+`deploy.sh` sets `gateway.gateway.search.chatMode: auto` (the chat agent sees only
+`search_tools` and `call_tool` once it can see more than 20 tools; see the search
+section above). The value sits one level deeper than the other `gateway:` settings in
+the umbrella values file; at the wrong level Helm ignores it without an error.
+
 Checked on the instance: all pods Running, the three Ingress certificates Ready
 (valid Let's Encrypt over HTTPS), and the WooCommerce (5 tools), DeepWiki (3) and
 GitHub (49) upstreams Connected. The repo's own `verify-oauth.sh`, `verify-hosted.sh`
