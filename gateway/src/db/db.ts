@@ -13,6 +13,7 @@ import * as m009 from "./migrations/009_stores.js";
 import * as m010 from "./migrations/010_hosted_servers.js";
 import * as m011 from "./migrations/011_hosted_auth_env.js";
 import * as m012 from "./migrations/012_oauth.js";
+import * as m013 from "./migrations/013_server_read_only.js";
 import type { Database } from "./schema.js";
 
 export type Db = Kysely<Database>;
@@ -32,6 +33,7 @@ const migrations: Record<string, Migration> = {
   "010_hosted_servers": m010,
   "011_hosted_auth_env": m011,
   "012_oauth": m012,
+  "013_server_read_only": m013,
 };
 
 export function createDb(connectionString: string, max = 10): Db {

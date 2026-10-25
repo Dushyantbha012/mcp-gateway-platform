@@ -126,6 +126,7 @@ describe("Servers page", () => {
       authType: "bearer",
       credential: "ghp_secret",
       timeoutMs: 10_000,
+      readOnly: false,
     });
     expect(await screen.findByTestId("server-github")).toBeInTheDocument();
   });

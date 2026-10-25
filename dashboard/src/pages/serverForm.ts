@@ -29,6 +29,7 @@ export interface ServerFormValues {
   authHeaderName: string;
   credential: string;
   timeoutMs: number;
+  readOnly: boolean;
 }
 
 /**
@@ -55,6 +56,7 @@ export function serverFormSchema(opts: { hasStoredCredential: boolean }) {
         .int("Must be a whole number")
         .min(100, "At least 100 ms")
         .max(120_000, "At most 120000 ms"),
+      readOnly: z.boolean(),
     })
     .superRefine((v, ctx) => {
       if (v.authType === "header") {
@@ -91,6 +93,7 @@ export function defaultsFor(server?: Server): ServerFormValues {
     authHeaderName: server?.authHeaderName ?? "",
     credential: "", // never prefilled
     timeoutMs: server?.timeoutMs ?? 10_000,
+    readOnly: server?.readOnly ?? false,
   };
 }
 
@@ -104,5 +107,6 @@ export function toInput(v: ServerFormValues): ServerInput {
     ...(v.authType === "header" ? { authHeaderName: v.authHeaderName } : {}),
     ...(v.authType !== "none" && v.credential ? { credential: v.credential } : {}),
     timeoutMs: v.timeoutMs,
+    readOnly: v.readOnly,
   };
 }

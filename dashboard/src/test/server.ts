@@ -36,6 +36,7 @@ export function serverFixture(overrides: Partial<Server> = {}): Server {
     authHeaderName: null,
     hasCredential: true,
     timeoutMs: 10_000,
+    readOnly: false,
     managedBy: null,
     tools: [
       {

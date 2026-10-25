@@ -49,7 +49,12 @@ const errorResult = (text: string): CallToolResult => ({
 
 function indexOf(servers: McpServer[]): ToolIndex {
   return buildToolIndex(
-    servers.map((s) => ({ slug: s.slug, name: s.name, tools: (s.tools_cache ?? []) as Tool[] })),
+    servers.map((s) => ({
+      slug: s.slug,
+      name: s.name,
+      tools: (s.tools_cache ?? []) as Tool[],
+      readOnly: s.read_only,
+    })),
   );
 }
 

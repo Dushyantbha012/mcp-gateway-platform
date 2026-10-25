@@ -75,6 +75,10 @@ gateway:
   seedWoocommerce:
     storeUrl: https://store.${DOM}
   oauth: { enabled: true }
+  # Every upstream tool definition in each Groq request is too big for its free tier (HTTP 413):
+  # give the chat agent search_tools + call_tool once it can see more than autoThreshold tools.
+  gateway:
+    search: { chatMode: auto, autoThreshold: 20 }
   stores:
     enabled: true
     template:

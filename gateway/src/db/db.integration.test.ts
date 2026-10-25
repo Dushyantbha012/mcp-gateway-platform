@@ -48,6 +48,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "010_hosted_servers",
       "011_hosted_auth_env",
       "012_oauth",
+      "013_server_read_only",
     ]);
     expect(await migrate(t.db)).toEqual([]);
     const tables = await sql<{ table_name: string }>`
@@ -92,6 +93,7 @@ describe.skipIf(!hasTestDb)("migrations", () => {
       "010_hosted_servers",
       "011_hosted_auth_env",
       "012_oauth",
+      "013_server_read_only",
     ]);
   });
 });

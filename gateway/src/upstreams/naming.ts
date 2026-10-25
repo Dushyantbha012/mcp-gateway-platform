@@ -50,12 +50,14 @@ export interface UpstreamTools {
   slug: string;
   name: string;
   tools: Tool[];
+  /** An admin vouches that all these tools only read; counts as `readOnlyHint: true`. */
+  readOnly?: boolean;
 }
 
 export interface Route {
   slug: string;
   upstreamName: string;
-  /** The upstream's `readOnlyHint`, used by the member read-only default. */
+  /** The upstream's `readOnlyHint` (or the server's read-only override); decides write approval and the member default. */
   readOnly: boolean;
   /** Why the upstream's description looked like it targets the model (see security/untrusted.ts). */
   flags: string[];
@@ -89,7 +91,7 @@ export function buildToolIndex(upstreams: UpstreamTools[]): ToolIndex {
       routes.set(name, {
         slug: upstream.slug,
         upstreamName: tool.name,
-        readOnly: tool.annotations?.readOnlyHint === true,
+        readOnly: upstream.readOnly === true || tool.annotations?.readOnlyHint === true,
         flags,
       });
       tools.push({

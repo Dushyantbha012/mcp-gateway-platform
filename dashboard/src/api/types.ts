@@ -48,6 +48,8 @@ export interface Server {
   authHeaderName: string | null;
   hasCredential: boolean;
   timeoutMs: number;
+  /** An admin vouched that every tool only reads, so MCP calls skip write approval. */
+  readOnly: boolean;
   /** Set when the provisioner owns this server; it can't be edited here. */
   managedBy: "store" | "hosted" | null;
   tools: ServerTool[];
@@ -151,6 +153,7 @@ export interface ServerInput {
   /** Write-only. Omitted on edit = keep the stored one. */
   credential?: string;
   timeoutMs: number;
+  readOnly?: boolean;
   enabled?: boolean;
 }
 
