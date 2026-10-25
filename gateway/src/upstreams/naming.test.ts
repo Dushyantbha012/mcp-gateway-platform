@@ -51,6 +51,30 @@ describe("exposedToolName", () => {
   });
 });
 
+describe("buildToolIndex read-only", () => {
+  const hinted: Tool = { ...tool("list"), annotations: { readOnlyHint: true } };
+
+  it("counts a tool without readOnlyHint as a write", () => {
+    const index = buildToolIndex([{ slug: "wiki", name: "Wiki", tools: [tool("ask")] }]);
+    expect(index.routes.get("wiki__ask")!.readOnly).toBe(false);
+  });
+
+  it("treats every tool of a server marked read-only as read-only", () => {
+    const index = buildToolIndex([
+      { slug: "wiki", name: "Wiki", tools: [tool("ask"), tool("read")], readOnly: true },
+    ]);
+    expect([...index.routes.values()].map((r) => r.readOnly)).toEqual([true, true]);
+  });
+
+  it("keeps the upstream's own hint when the server override is off", () => {
+    const index = buildToolIndex([
+      { slug: "shop", name: "Shop", tools: [hinted, tool("create")], readOnly: false },
+    ]);
+    expect(index.routes.get("shop__list")!.readOnly).toBe(true);
+    expect(index.routes.get("shop__create")!.readOnly).toBe(false);
+  });
+});
+
 describe("buildToolIndex", () => {
   it("keeps same-named tools from two servers apart and routes each correctly", () => {
     const index = buildToolIndex([

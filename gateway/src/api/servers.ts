@@ -45,6 +45,7 @@ const fields = {
   authHeaderName: headerName.nullable(),
   credential: z.string().min(1).max(4096).nullable(),
   timeoutMs: z.number().int().min(100).max(120_000),
+  readOnly: z.boolean(),
 };
 
 const createSchema = z.object({
@@ -54,6 +55,7 @@ const createSchema = z.object({
   authHeaderName: fields.authHeaderName.optional(),
   credential: fields.credential.optional(),
   timeoutMs: fields.timeoutMs.default(10_000),
+  readOnly: fields.readOnly.default(false),
 });
 
 const updateSchema = z.object(fields).partial().strict();
@@ -66,7 +68,12 @@ const updateSchema = z.object(fields).partial().strict();
  */
 export function serverView(server: McpServer, opts: { admin: boolean }) {
   const index = buildToolIndex([
-    { slug: server.slug, name: server.name, tools: (server.tools_cache ?? []) as Tool[] },
+    {
+      slug: server.slug,
+      name: server.name,
+      tools: (server.tools_cache ?? []) as Tool[],
+      readOnly: server.read_only,
+    },
   ]);
   return {
     id: server.id,
@@ -81,6 +88,7 @@ export function serverView(server: McpServer, opts: { admin: boolean }) {
     authHeaderName: server.auth_header_name,
     hasCredential: server.has_credential,
     timeoutMs: server.timeout_ms,
+    readOnly: server.read_only,
     managedBy: server.managed_by,
     tools: index.tools.map((t) => ({
       name: t.name,
@@ -194,6 +202,7 @@ export function serversApi(deps: {
       auth_header_name: headerName,
       has_credential: credential !== null,
       timeout_ms: body.timeoutMs,
+      read_only: body.readOnly,
     }).catch(async (err) => {
       if (credential !== null) await credentials.delete(id).catch(() => undefined);
       throw conflictOnDuplicate(`A server with slug '${body.slug}'`)(err);
@@ -214,6 +223,7 @@ export function serversApi(deps: {
       enabled: body.enabled,
       auth_type: body.authType,
       timeout_ms: body.timeoutMs,
+      read_only: body.readOnly,
     };
     changes.auth_header_name =
       authType === "header" ? (body.authHeaderName ?? current.auth_header_name) : null;

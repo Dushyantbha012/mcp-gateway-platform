@@ -378,6 +378,10 @@ function ServerDrawer({ server, onClose }: { server: Server | undefined; onClose
                 </dd>
                 <dt>Timeout</dt>
                 <dd className="text-foreground">{server.timeoutMs} ms</dd>
+                <dt>Writes</dt>
+                <dd className="text-foreground">
+                  {server.readOnly ? "Read-only (no approval)" : "Per tool hints"}
+                </dd>
                 <dt>Last check</dt>
                 <dd className="text-foreground">
                   {server.enabled ? timeAgo(server.lastCheckedAt) : "-"}

@@ -20,6 +20,7 @@ interface RpcResult {
 describe.skipIf(!hasTestDb)("MCP write approvals", () => {
   let t: TestDatabase;
   let shop: FakeUpstream;
+  let wiki: FakeUpstream;
   let gw: ReturnType<typeof buildTestApp>;
   let key: string;
   let cookie: string;
@@ -52,6 +53,15 @@ describe.skipIf(!hasTestDb)("MCP write approvals", () => {
       readOnlyTools: ["list_orders"],
     });
     await insertServer(t.db, { slug: "shop", name: "Shop", url: shop.url, timeout_ms: 2_000 });
+    // No readOnlyHint on its tools, like DeepWiki; the server override vouches for it.
+    wiki = await startFakeUpstream({ toolNames: ["ask_question"] });
+    await insertServer(t.db, {
+      slug: "wiki",
+      name: "Wiki",
+      url: wiki.url,
+      timeout_ms: 2_000,
+      read_only: true,
+    });
     gw = buildTestApp(t.db, {}, { holdMcpWrites: true });
     await checkUntilConnected(gw);
     const u = await userWithPassword(t.db, "ann@example.com", "member", "correct horse battery");
@@ -67,7 +77,14 @@ describe.skipIf(!hasTestDb)("MCP write approvals", () => {
   afterAll(async () => {
     await gw?.registry.closeAll();
     await shop?.close();
+    await wiki?.close();
     await t?.drop();
+  });
+
+  it("lets every tool of a server marked read-only through without asking", async () => {
+    const r = await mcp(key, "wiki__ask_question", { q: "what is this repo" });
+    expect(r.isError).toBeFalsy();
+    expect(wiki.calls.ask_question).toBe(1);
   });
 
   it("lets read-only tools through without asking", async () => {

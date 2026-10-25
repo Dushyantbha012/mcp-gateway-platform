@@ -162,6 +162,22 @@ function UrlServerForm(props: { server?: Server; onClose: () => void }) {
             <FieldError errors={[errors.timeoutMs]} />
           </Field>
         </div>
+        <Field orientation="horizontal">
+          <input
+            id="server-read-only"
+            type="checkbox"
+            className="mt-0.5 size-4"
+            {...form.register("readOnly")}
+          />
+          <div className="flex flex-col gap-1">
+            <FieldLabel htmlFor="server-read-only">Treat all tools as read-only</FieldLabel>
+            <FieldDescription>
+              For servers that don't mark their tools read-only (e.g. DeepWiki). Their calls from
+              MCP clients then skip the write approval. Only turn on for servers that never change
+              anything.
+            </FieldDescription>
+          </div>
+        </Field>
         {authType === "header" && (
           <Field data-invalid={!!errors.authHeaderName}>
             <FieldLabel htmlFor="server-header">Header name</FieldLabel>

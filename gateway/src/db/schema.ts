@@ -47,6 +47,8 @@ export interface McpServersTable {
   /** Whether the credential store (a Kubernetes Secret) holds a value for this server. */
   has_credential: Generated<boolean>;
   timeout_ms: Generated<number>;
+  /** Admin-declared: every tool of this server only reads, whatever its `readOnlyHint` says. */
+  read_only: Generated<boolean>;
   status: Generated<ServerStatus>;
   last_error: string | null;
   last_checked_at: Date | null;

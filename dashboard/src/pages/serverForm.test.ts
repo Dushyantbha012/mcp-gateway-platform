@@ -10,6 +10,7 @@ const valid: ServerFormValues = {
   authHeaderName: "",
   credential: "ghp_x",
   timeoutMs: 10_000,
+  readOnly: false,
 };
 
 const errorsFor = (values: Partial<ServerFormValues>, hasStoredCredential = false) => {

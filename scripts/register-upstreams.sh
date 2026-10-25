@@ -78,6 +78,11 @@ api PUT /permissions -d '{"role":"member","serverSlug":"deepwiki","toolName":nul
   check "allow deepwiki for members" 200
 echo "deepwiki: allowed for members (its tools carry no readOnlyHint)"
 
+# The Allow above only lets members call it; MCP writes are still held for approval
+# because the tools carry no hint. Vouch that the whole server only reads.
+api PATCH "/servers/$(id_of deepwiki)" -d '{"readOnly":true}' | check "mark deepwiki read-only" 200
+echo "deepwiki: marked read-only (no write approval)"
+
 echo "Waiting for the health check to connect them..."
 for _ in $(seq 1 40); do
   api GET /servers | sed '$d' | python3 -c '

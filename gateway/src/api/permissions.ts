@@ -103,7 +103,12 @@ export function permissionsApi(db: Db, memberDefault: MemberDefault = "allowAll"
     const out = [];
     for (const server of servers.filter((s) => s.enabled)) {
       const index = buildToolIndex([
-        { slug: server.slug, name: server.name, tools: (server.tools_cache ?? []) as Tool[] },
+        {
+          slug: server.slug,
+          name: server.name,
+          tools: (server.tools_cache ?? []) as Tool[],
+          readOnly: server.read_only,
+        },
       ]);
       for (const [name, route] of index.routes) {
         const d = decide(
