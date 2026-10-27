@@ -7,6 +7,11 @@ built for the Urumi AI FDE Internship Round 1 assignment.
 [Threat model](docs/THREAT_MODEL.md) · [Observability](docs/observability/README.md) ·
 [Bonus items and where to find them](#bonus-items-and-where-to-find-them)
 
+**Live demo (AWS EC2 + k3s):** [dashboard](https://dashboard.13-203-71-122.sslip.io/login) ·
+[store](https://store.13-203-71-122.sslip.io/shop/) · MCP endpoint
+`https://gateway.13-203-71-122.sslip.io/mcp`. The reviewer login is in the submission
+email. The hostnames follow the instance's IP, so they change if it is stopped and started.
+
 **Status:** the store (WordPress + WooCommerce + MySQL), our own
 WooCommerce MCP server, the MCP gateway (with its Postgres, API keys, audit
 log and REST API), the team dashboard (login, servers, tools, keys, team,
